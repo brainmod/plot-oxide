@@ -4,6 +4,29 @@
 
 Transition from csv/`Vec<Vec<f64>>` to polars/parquet, improve idiomatic Rust patterns, fix layout sizing, and modularize controls.
 
+## Recent Progress
+
+**Phase 1: Polars/Parquet Migration** - Started 2025-11-26
+
+### Completed (Session 1)
+- ✅ Added polars v0.46 to Cargo.toml with features: lazy, parquet, csv, temporal, dtype-datetime
+- ✅ Created data module structure (`src/data/mod.rs`, `src/data/source.rs`)
+- ✅ Implemented `DataSource` wrapper with:
+  - `load()` method supporting both CSV and Parquet files
+  - `column_values()` for accessing series data
+  - `dataframe()` for direct DataFrame access
+  - `apply_filters()` for lazy filtering
+  - Schema introspection methods
+- ✅ Implemented `DataError` type for proper error handling
+- ✅ Parquet file format support added alongside CSV
+
+### Next Steps
+- Migrate `PlotOxide::load_csv()` to use `DataSource`
+- Replace `Vec<Vec<f64>>` and `Vec<Vec<String>>` fields with `Option<DataSource>`
+- Update statistics calculations to use polars expressions
+- Implement LTTB downsampling with polars operations
+- Test and validate migration before removing csv crate
+
 ---
 
 ## Phase 1: Polars/Parquet Migration
@@ -474,15 +497,16 @@ src/
 
 ## Migration Checklist
 
-### Phase 1: Polars
-- [ ] Add polars to Cargo.toml
-- [ ] Create DataSource wrapper
-- [ ] Migrate load_csv to polars
-- [ ] Add parquet support
-- [ ] Replace Vec<Vec<f64>> with DataFrame
-- [ ] Replace manual stats with polars
-- [ ] Update downsampling
-- [ ] Remove csv crate
+### Phase 1: Polars ✅ IN PROGRESS
+- [x] Add polars to Cargo.toml (v0.46 with lazy, parquet, csv, temporal features)
+- [x] Create DataSource wrapper (src/data/source.rs)
+- [x] Implement DataError type for proper error handling
+- [x] Add parquet support (via DataSource::load())
+- [ ] Migrate load_csv to use DataSource
+- [ ] Replace Vec<Vec<f64>> with DataFrame in PlotOxide struct
+- [ ] Replace manual stats with polars expressions
+- [ ] Update downsampling to use polars operations
+- [ ] Remove csv crate dependency
 
 ### Phase 2: Idioms
 - [ ] Split PlotOxide into state modules

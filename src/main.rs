@@ -9,6 +9,9 @@ use egui_plot::{Bar, BarChart, BoxElem, BoxPlot, BoxSpread, HLine, Line, Plot, P
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
+// Data module for Polars-based data handling
+mod data;
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum LineStyle {
     Line,
