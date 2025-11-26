@@ -104,21 +104,23 @@ Transition from CSV-only support to a Polars-based backend enabling:
 - **Efficient filtering and transformations** using Polars expressions
 - **Reduced memory duplication** (single DataFrame instead of raw_data + data)
 
-**Progress (Updated 2025-11-26):**
+**Progress (Updated 2025-11-26, Session 2):**
 - [x] Add polars dependency (v0.46 with lazy, parquet, csv, temporal features)
 - [x] Create DataSource wrapper abstraction (src/data/source.rs)
 - [x] Implement DataError type for robust error handling
 - [x] Add parquet format support (via DataSource::load())
-- [ ] Migrate CSV loading to use DataSource
-- [ ] Replace Vec<Vec<f64>> with DataFrame in main struct
-- [ ] Replace manual statistics with polars operations
+- [x] Migrate CSV loading to use DataSource
+- [x] Add DataSource field to PlotOxide struct (backward compatible)
+- [x] Add compatibility methods (column_as_f64, as_row_major_f64, etc.)
+- [ ] Replace manual statistics with polars expressions
 - [ ] Update downsampling algorithms
+- [ ] Test with CSV and Parquet files
+- [ ] Remove legacy Vec<Vec<f64>> fields
 - [ ] Remove csv crate dependency
 
 **Latest Commits:**
-- DataSource wrapper with lazy and materialized DataFrame support
-- CSV and Parquet file loading capability
-- Column introspection and filtering infrastructure
+- Session 1: DataSource wrapper with lazy and materialized DataFrame support
+- Session 2: Migrated load_csv() to use DataSource, maintained backward compatibility
 
 ### Phase 2: Idiomatic Rust Improvements 📋 Planned
 

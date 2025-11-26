@@ -123,4 +123,109 @@ impl DataSource {
         self.materialized = self.df.clone().collect()?;
         Ok(())
     }
+
+    /// Get a column's numeric values as Vec<f64>
+    /// Non-numeric values are converted to NaN
+    pub fn column_as_f64(&self, col_idx: usize) -> Result<Vec<f64>, DataError> {
+        let col_names = self.column_names();
+        if col_idx >= col_names.len() {
+            return Err(DataError::ColumnNotFound(format!("Index {}", col_idx)));
+        }
+
+        let series = self.column_values(&col_names[col_idx])?;
+
+        // Try to cast to f64, if that fails, extract as best we can
+        match series.cast(&DataType::Float64) {
+            Ok(s) => Ok(s.f64()
+                .map_err(|e| DataError::PolarsError(e))?
+                .into_iter()
+                .map(|opt| opt.unwrap_or(f64::NAN))
+                .collect()),
+            Err(_) => {
+                // For string columns, try to parse as f64
+                if let Ok(str_series) = series.str() {
+                    Ok(str_series
+                        .into_iter()
+                        .map(|opt| {
+                            opt.and_then(|s| s.parse::<f64>().ok())
+                                .unwrap_or(f64::NAN)
+                        })
+                        .collect())
+                } else {
+                    // Last resort: return NaN for all values
+                    Ok(vec![f64::NAN; series.len()])
+                }
+            }
+        }
+    }
+
+    /// Get a column's string values as Vec<String>
+    pub fn column_as_string(&self, col_idx: usize) -> Result<Vec<String>, DataError> {
+        let col_names = self.column_names();
+        if col_idx >= col_names.len() {
+            return Err(DataError::ColumnNotFound(format!("Index {}", col_idx)));
+        }
+
+        let series = self.column_values(&col_names[col_idx])?;
+
+        // Convert to string representation
+        Ok(series
+            .iter()
+            .map(|any_value| format!("{}", any_value))
+            .collect())
+    }
+
+    /// Get all data as Vec<Vec<f64>> (row-major format)
+    /// This is for compatibility with existing code
+    pub fn as_row_major_f64(&self) -> Vec<Vec<f64>> {
+        let n_rows = self.height();
+        let n_cols = self.width();
+        let mut result = Vec::with_capacity(n_rows);
+
+        for row_idx in 0..n_rows {
+            let mut row = Vec::with_capacity(n_cols);
+            for col_idx in 0..n_cols {
+                let val = self.column_as_f64(col_idx)
+                    .ok()
+                    .and_then(|col| col.get(row_idx).copied())
+                    .unwrap_or(f64::NAN);
+                row.push(val);
+            }
+            result.push(row);
+        }
+
+        result
+    }
+
+    /// Get all data as Vec<Vec<String>> (row-major format)
+    /// This is for compatibility with existing code
+    pub fn as_row_major_string(&self) -> Vec<Vec<String>> {
+        let n_rows = self.height();
+        let n_cols = self.width();
+        let mut result = Vec::with_capacity(n_rows);
+
+        for row_idx in 0..n_rows {
+            let mut row = Vec::with_capacity(n_cols);
+            for col_idx in 0..n_cols {
+                let val = self.column_as_string(col_idx)
+                    .ok()
+                    .and_then(|col| col.get(row_idx).cloned())
+                    .unwrap_or_default();
+                row.push(val);
+            }
+            result.push(row);
+        }
+
+        result
+    }
+
+    /// Get a specific cell value as f64
+    pub fn get_f64(&self, row: usize, col: usize) -> Option<f64> {
+        self.column_as_f64(col).ok()?.get(row).copied()
+    }
+
+    /// Get a specific cell value as String
+    pub fn get_string(&self, row: usize, col: usize) -> Option<String> {
+        self.column_as_string(col).ok()?.get(row).cloned()
+    }
 }

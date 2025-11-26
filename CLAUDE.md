@@ -20,12 +20,26 @@ Transition from csv/`Vec<Vec<f64>>` to polars/parquet, improve idiomatic Rust pa
 - ✅ Implemented `DataError` type for proper error handling
 - ✅ Parquet file format support added alongside CSV
 
+### Completed (Session 2)
+- ✅ Added compatibility methods to `DataSource`:
+  - `column_as_f64()` - Extract column as Vec<f64>
+  - `column_as_string()` - Extract column as Vec<String>
+  - `as_row_major_f64()` - Get all data as Vec<Vec<f64>>
+  - `as_row_major_string()` - Get all data as Vec<Vec<String>>
+  - `get_f64()`, `get_string()` - Cell access methods
+- ✅ Added `data_source: Option<DataSource>` field to PlotOxide struct
+- ✅ Migrated `load_csv()` to use `DataSource::load()`
+- ✅ Maintained backward compatibility by populating legacy fields
+- ✅ Removed csv::ReaderBuilder import (no longer needed)
+- ✅ Clean build with no warnings or errors
+
 ### Next Steps
-- Migrate `PlotOxide::load_csv()` to use `DataSource`
-- Replace `Vec<Vec<f64>>` and `Vec<Vec<String>>` fields with `Option<DataSource>`
+- Test application with sample CSV and Parquet files
+- Gradually migrate plot generation to use DataSource directly
 - Update statistics calculations to use polars expressions
 - Implement LTTB downsampling with polars operations
-- Test and validate migration before removing csv crate
+- Remove legacy fields (headers, raw_data, data) after full migration
+- Remove csv crate dependency
 
 ---
 
@@ -502,10 +516,13 @@ src/
 - [x] Create DataSource wrapper (src/data/source.rs)
 - [x] Implement DataError type for proper error handling
 - [x] Add parquet support (via DataSource::load())
-- [ ] Migrate load_csv to use DataSource
-- [ ] Replace Vec<Vec<f64>> with DataFrame in PlotOxide struct
+- [x] Migrate load_csv to use DataSource
+- [x] Add DataSource to PlotOxide struct (backward compatible)
+- [x] Add compatibility methods for Vec<Vec<f64>> access
 - [ ] Replace manual stats with polars expressions
 - [ ] Update downsampling to use polars operations
+- [ ] Test with CSV and Parquet files
+- [ ] Remove legacy Vec<Vec<f64>> fields
 - [ ] Remove csv crate dependency
 
 ### Phase 2: Idioms
