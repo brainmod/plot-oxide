@@ -1,0 +1,521 @@
+# PlotOxide Refactoring Plan
+
+## Overview
+
+Transition from csv/`Vec<Vec<f64>>` to polars/parquet, improve idiomatic Rust patterns, fix layout sizing, and modularize controls.
+
+---
+
+## Phase 1: Polars/Parquet Migration
+
+### Current Pain Points
+- `Vec<Vec<f64>>` + `Vec<Vec<String>>` duplication
+- Manual parsing of timestamps/values
+- No lazy evaluation for large datasets
+- CSV-only support
+
+### Target Architecture
+
+```rust
+// Cargo.toml additions
+polars = { version = "0.46", features = ["lazy", "parquet", "csv", "temporal", "dtype-datetime"] }
+```
+
+```rust
+struct DataSource {
+    df: LazyFrame,           // Lazy for filtering/transforms
+    materialized: DataFrame, // Cached for display
+    schema: Arc<Schema>,
+    file_path: Option<PathBuf>,
+}
+
+impl DataSource {
+    fn load(path: &Path) -> Result<Self, DataError> {
+        let df = match path.extension().and_then(|s| s.to_str()) {
+            Some("parquet") => LazyFrame::scan_parquet(path, Default::default())?,
+            Some("csv") => LazyCsvReader::new(path).finish()?,
+            _ => return Err(DataError::UnsupportedFormat),
+        };
+        // ...
+    }
+
+    fn column_values(&self, col: &str) -> PolarsResult<Series> {
+        self.materialized.column(col).cloned()
+    }
+
+    fn apply_filters(&mut self, filters: &FilterConfig) -> PolarsResult<()> {
+        let mut expr = lit(true);
+        if let Some(min) = filters.y_min {
+            expr = expr.and(col(&filters.y_col).gt_eq(lit(min)));
+        }
+        // ...
+        self.materialized = self.df.clone().filter(expr).collect()?;
+        Ok(())
+    }
+}
+```
+
+### Migration Steps
+
+1. **Add polars dependency**, keep csv crate temporarily
+2. **Create `DataSource` wrapper** that abstracts storage
+3. **Replace stat calculations** with polars expressions:
+   ```rust
+   // Before
+   fn calculate_statistics(values: &[f64]) -> (f64, f64) { ... }
+   
+   // After
+   fn statistics(series: &Series) -> PolarsResult<Stats> {
+       Ok(Stats {
+           mean: series.mean().unwrap_or(0.0),
+           std: series.std(1).unwrap_or(0.0),
+           min: series.min::<f64>()?.unwrap_or(0.0),
+           max: series.max::<f64>()?.unwrap_or(0.0),
+           median: series.median().unwrap_or(0.0),
+       })
+   }
+   ```
+4. **Replace timestamp parsing** with polars datetime:
+   ```rust
+   df.with_column(
+       col("timestamp").str().to_datetime(None, None, StrptimeOptions::default(), lit("raise"))
+   )
+   ```
+5. **Remove raw_data/data duplication** - single DataFrame source
+6. **Remove csv crate** after validation
+
+### Downsampling with Polars
+
+```rust
+fn downsample_lttb_polars(df: &DataFrame, x_col: &str, y_col: &str, threshold: usize) -> DataFrame {
+    // Use polars sample() for initial reduction, then LTTB on smaller set
+    if df.height() <= threshold {
+        return df.clone();
+    }
+    // Implementation using polars operations
+}
+```
+
+---
+
+## Phase 2: Idiomatic Rust Improvements
+
+### 2.1 Break Up Mega-Struct
+
+Current `PlotOxide` has 50+ fields. Split into:
+
+```rust
+// src/state/mod.rs
+mod view;
+mod spc;
+mod filters;
+
+pub struct AppState {
+    data: Option<DataSource>,
+    view: ViewState,
+    spc: SpcConfig,
+    filters: FilterConfig,
+    ui: UiState,
+}
+
+// src/state/view.rs
+#[derive(Default)]
+pub struct ViewState {
+    pub x_column: Option<String>,
+    pub y_columns: Vec<String>,
+    pub use_row_index: bool,
+    pub plot_mode: PlotMode,
+    pub line_style: LineStyle,
+    pub show_grid: bool,
+    pub show_legend: bool,
+    pub dark_mode: bool,
+}
+
+// src/state/spc.rs
+#[derive(Default)]
+pub struct SpcConfig {
+    pub show_limits: bool,
+    pub sigma: f64,
+    pub show_zones: bool,
+    pub show_we_rules: bool,
+    pub capability: Option<CapabilitySpec>,
+}
+
+pub struct CapabilitySpec {
+    pub lsl: f64,
+    pub usl: f64,
+}
+
+// src/state/filters.rs
+#[derive(Default)]
+pub struct FilterConfig {
+    pub y_col: String,
+    pub y_range: Option<(f64, f64)>,
+    pub x_range: Option<(f64, f64)>,
+    pub exclude_empty: bool,
+    pub outlier_sigma: Option<f64>,
+}
+```
+
+### 2.2 Error Handling
+
+Replace `eprintln!` with proper error types:
+
+```rust
+// src/error.rs
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum PlotError {
+    #[error("Failed to load file: {0}")]
+    FileLoad(#[from] std::io::Error),
+    #[error("Polars error: {0}")]
+    Polars(#[from] polars::error::PolarsError),
+    #[error("Unsupported file format: {0}")]
+    UnsupportedFormat(String),
+    #[error("Column not found: {0}")]
+    ColumnNotFound(String),
+}
+
+// Show errors in UI toast/status bar instead of eprintln
+```
+
+### 2.3 Builder Pattern for Complex Objects
+
+```rust
+impl SpcConfig {
+    pub fn builder() -> SpcConfigBuilder {
+        SpcConfigBuilder::default()
+    }
+}
+
+#[derive(Default)]
+pub struct SpcConfigBuilder {
+    show_limits: bool,
+    sigma: f64,
+    // ...
+}
+
+impl SpcConfigBuilder {
+    pub fn with_sigma(mut self, sigma: f64) -> Self {
+        self.sigma = sigma;
+        self
+    }
+    pub fn build(self) -> SpcConfig { /* ... */ }
+}
+```
+
+### 2.4 Replace Manual Loops with Iterators
+
+```rust
+// Before
+let mut result = Vec::new();
+for i in 0..values.len() {
+    if i + 1 >= window {
+        let sum: f64 = values[i + 1 - window..=i].iter().sum();
+        result.push([i as f64, sum / window as f64]);
+    }
+}
+
+// After
+let result: Vec<_> = values
+    .windows(window)
+    .enumerate()
+    .map(|(i, w)| [(i + window - 1) as f64, w.iter().sum::<f64>() / window as f64])
+    .collect();
+```
+
+### 2.5 Use `Option` Combinators
+
+```rust
+// Before
+if let Some(path) = self.current_file {
+    if let Some(name) = path.file_name() {
+        ui.label(format!("File: {}", name.to_string_lossy()));
+    }
+}
+
+// After
+self.current_file
+    .as_ref()
+    .and_then(|p| p.file_name())
+    .map(|n| ui.label(format!("File: {}", n.to_string_lossy())));
+```
+
+### 2.6 Const for Magic Numbers
+
+```rust
+// Before: scattered literals
+if points.len() > 5000 { ... }
+if min_dist < 0.0004 { ... }
+
+// After
+mod constants {
+    pub const DOWNSAMPLE_THRESHOLD: usize = 5000;
+    pub const POINT_SELECT_TOLERANCE: f64 = 0.0004;
+    pub const DEFAULT_SIGMA: f64 = 3.0;
+    pub const MAX_RECENT_FILES: usize = 5;
+}
+```
+
+---
+
+## Phase 3: Layout Improvements (Strip Layout)
+
+### Current Issues
+- Side panels fight for space
+- Fixed widths don't adapt
+- Stats panel height fixed
+
+### Strip Layout Solution
+
+```rust
+use egui_extras::{StripBuilder, Size};
+
+fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    CentralPanel::default().show(ctx, |ui| {
+        StripBuilder::new(ui)
+            .size(Size::exact(200.0))      // Left panel (series)
+            .size(Size::remainder())        // Center (plot)
+            .size(Size::initial(300.0).at_least(200.0)) // Right panel (data table)
+            .horizontal(|mut strip| {
+                strip.cell(|ui| self.render_series_panel(ui));
+                strip.strip(|builder| {
+                    builder
+                        .size(Size::exact(32.0))    // Toolbar
+                        .size(Size::remainder())     // Plot
+                        .size(Size::initial(100.0)) // Stats (collapsible)
+                        .vertical(|mut strip| {
+                            strip.cell(|ui| self.render_toolbar(ui));
+                            strip.cell(|ui| self.render_plot(ui));
+                            if self.ui.show_stats {
+                                strip.cell(|ui| self.render_stats(ui));
+                            }
+                        });
+                });
+                if self.ui.show_data_table {
+                    strip.cell(|ui| self.render_data_table(ui));
+                }
+            });
+    });
+}
+```
+
+### Responsive Breakpoints
+
+```rust
+fn layout_mode(ctx: &egui::Context) -> LayoutMode {
+    let width = ctx.screen_rect().width();
+    match width {
+        w if w < 800.0 => LayoutMode::Compact,   // Stack panels
+        w if w < 1200.0 => LayoutMode::Normal,   // Hide data table
+        _ => LayoutMode::Wide,                    // Full layout
+    }
+}
+```
+
+---
+
+## Phase 4: Modular Controls
+
+### 4.1 Control Groups as Reusable Widgets
+
+```rust
+// src/widgets/mod.rs
+mod spc_controls;
+mod filter_controls;
+mod plot_mode_selector;
+
+// src/widgets/spc_controls.rs
+pub struct SpcControls<'a> {
+    config: &'a mut SpcConfig,
+}
+
+impl<'a> SpcControls<'a> {
+    pub fn new(config: &'a mut SpcConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn show(&mut self, ui: &mut Ui) -> Response {
+        ui.horizontal(|ui| {
+            ui.toggle_value(&mut self.config.show_limits, "σ Limits");
+            if self.config.show_limits {
+                ui.add(Slider::new(&mut self.config.sigma, 1.0..=6.0).step_by(0.5));
+            }
+            ui.toggle_value(&mut self.config.show_zones, "Zones");
+            ui.toggle_value(&mut self.config.show_we_rules, "WE");
+        })
+        .response
+    }
+}
+
+// Usage in main update:
+SpcControls::new(&mut self.state.spc).show(ui);
+```
+
+### 4.2 Collapsible Sections
+
+```rust
+pub fn collapsible_section(ui: &mut Ui, title: &str, id: impl Hash, content: impl FnOnce(&mut Ui)) {
+    CollapsingHeader::new(title)
+        .id_salt(id)
+        .default_open(false)
+        .show(ui, content);
+}
+
+// Usage
+collapsible_section(ui, "📊 SPC Controls", "spc", |ui| {
+    SpcControls::new(&mut self.state.spc).show(ui);
+});
+collapsible_section(ui, "🔍 Filters", "filters", |ui| {
+    FilterControls::new(&mut self.state.filters).show(ui);
+});
+```
+
+### 4.3 Toolbar with Icon Buttons
+
+```rust
+fn render_toolbar(&mut self, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        if ui.button("📂").on_hover_text("Open file").clicked() {
+            self.open_file_dialog();
+        }
+        ui.separator();
+        
+        // Plot mode as segmented button
+        ui.selectable_value(&mut self.state.view.plot_mode, PlotMode::Scatter, "📈");
+        ui.selectable_value(&mut self.state.view.plot_mode, PlotMode::Histogram, "📊");
+        ui.selectable_value(&mut self.state.view.plot_mode, PlotMode::BoxPlot, "📦");
+        
+        ui.separator();
+        ui.toggle_value(&mut self.state.view.show_grid, "⊞").on_hover_text("Grid (G)");
+        ui.toggle_value(&mut self.state.ui.show_stats, "∑").on_hover_text("Statistics");
+        
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui.button(if self.state.view.dark_mode { "🌙" } else { "☀" }).clicked() {
+                self.state.view.dark_mode = !self.state.view.dark_mode;
+            }
+        });
+    });
+}
+```
+
+### 4.4 Compact Control Rows
+
+```rust
+// Instead of sprawling horizontal layouts, use grid
+fn render_filter_controls(&mut self, ui: &mut Ui) {
+    Grid::new("filter_grid")
+        .num_columns(4)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("Y:");
+            range_input(ui, &mut self.state.filters.y_range);
+            ui.end_row();
+            
+            ui.label("X:");
+            range_input(ui, &mut self.state.filters.x_range);
+            ui.end_row();
+            
+            ui.checkbox(&mut self.state.filters.exclude_empty, "Empty");
+            ui.checkbox(&mut self.state.filters.outlier_sigma.is_some(), "Outliers");
+            ui.end_row();
+        });
+}
+
+fn range_input(ui: &mut Ui, range: &mut Option<(f64, f64)>) {
+    let mut enabled = range.is_some();
+    let (mut min, mut max) = range.unwrap_or((0.0, 100.0));
+    
+    ui.checkbox(&mut enabled, "");
+    ui.add_enabled(enabled, DragValue::new(&mut min).speed(0.1));
+    ui.label("–");
+    ui.add_enabled(enabled, DragValue::new(&mut max).speed(0.1));
+    
+    *range = if enabled { Some((min, max)) } else { None };
+}
+```
+
+---
+
+## Phase 5: Project Structure
+
+```
+src/
+├── main.rs              # Entry point, eframe setup
+├── app.rs               # PlotOxide App impl
+├── error.rs             # PlotError enum
+├── constants.rs         # Magic numbers
+├── data/
+│   ├── mod.rs
+│   ├── source.rs        # DataSource (polars wrapper)
+│   ├── stats.rs         # Statistics calculations
+│   └── spc.rs           # SPC calculations (WE rules, Cp/Cpk, etc.)
+├── state/
+│   ├── mod.rs           # AppState
+│   ├── view.rs          # ViewState
+│   ├── spc.rs           # SpcConfig
+│   └── filters.rs       # FilterConfig
+├── ui/
+│   ├── mod.rs
+│   ├── toolbar.rs       # Top toolbar
+│   ├── series_panel.rs  # Left panel
+│   ├── plot.rs          # Main plot area
+│   ├── stats_panel.rs   # Bottom stats
+│   └── data_table.rs    # Right panel
+└── widgets/
+    ├── mod.rs
+    ├── spc_controls.rs
+    ├── filter_controls.rs
+    └── range_input.rs
+```
+
+---
+
+## Migration Checklist
+
+### Phase 1: Polars
+- [ ] Add polars to Cargo.toml
+- [ ] Create DataSource wrapper
+- [ ] Migrate load_csv to polars
+- [ ] Add parquet support
+- [ ] Replace Vec<Vec<f64>> with DataFrame
+- [ ] Replace manual stats with polars
+- [ ] Update downsampling
+- [ ] Remove csv crate
+
+### Phase 2: Idioms
+- [ ] Split PlotOxide into state modules
+- [ ] Add thiserror for error handling
+- [ ] Replace eprintln with UI errors
+- [ ] Extract constants
+- [ ] Iterator refactoring pass
+- [ ] Option combinator cleanup
+
+### Phase 3: Layout
+- [ ] Implement StripBuilder layout
+- [ ] Add responsive breakpoints
+- [ ] Make panels collapsible
+- [ ] Test resize behavior
+
+### Phase 4: Controls
+- [ ] Extract SpcControls widget
+- [ ] Extract FilterControls widget
+- [ ] Create compact toolbar
+- [ ] Add collapsible sections
+- [ ] Test touch/small screen
+
+### Phase 5: Structure
+- [ ] Create module structure
+- [ ] Move code to modules
+- [ ] Update imports
+- [ ] Final cleanup
+
+---
+
+## Notes
+
+- Keep tests alongside each module
+- Consider `egui_dock` for dockable panels (future)
+- Profile with `cargo flamegraph` after polars migration
+- Target: <100ms load for 100k row CSV
