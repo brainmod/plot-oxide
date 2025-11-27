@@ -11,28 +11,20 @@ use serde::{Deserialize, Serialize};
 // Data module for Polars-based data handling
 mod data;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-enum LineStyle {
-    Line,
-    Points,
-    LineAndPoints,
-}
+// Application constants
+mod constants;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-enum PlotMode {
-    Scatter,
-    Histogram,
-    BoxPlot,
-    Pareto,
-    XbarR,
-    PChart,
-}
+// Error handling
+mod error;
 
-#[derive(Debug, Clone)]
-struct WEViolation {
-    point_index: usize,
-    rules: Vec<String>,  // Which rules violated
-}
+// Application state modules
+mod state;
+
+// Import types from state modules
+use state::{LineStyle, PlotMode, WEViolation};
+
+// Import error types
+use error::PlotError;
 
 #[derive(Serialize, Deserialize)]
 struct ViewConfig {
@@ -61,139 +53,22 @@ struct ViewConfig {
 }
 
 struct PlotOxide {
-    // New Polars-based data handling
-    data_source: Option<data::DataSource>,
+    // Application state (Phase 2 refactoring)
+    state: state::AppState,
 
-    // Legacy fields (to be removed after full migration)
+    // Legacy fields for backward compatibility (to be gradually removed)
     headers: Vec<String>,
     raw_data: Vec<Vec<String>>,  // Store raw string data
     data: Vec<Vec<f64>>,         // Numeric data for plotting
-
-    x_index: usize,
-    use_row_index: bool,
-    y_indices: Vec<usize>,       // Multiple Y series
-    current_file: Option<PathBuf>,
-    recent_files: Vec<PathBuf>,
-    dark_mode: bool,
-    show_help: bool,
-    downsample_threshold: usize,
-    last_selected_series: Option<usize>,
-    reset_bounds: bool,
-    show_grid: bool,
-    show_legend: bool,
-    allow_zoom: bool,
-    allow_drag: bool,
-    line_style: LineStyle,
-    plot_mode: PlotMode,
-    x_is_timestamp: bool,
-    hovered_point: Option<(usize, usize)>, // (series_idx, point_idx)
-    selected_point: Option<(usize, usize)>, // (series_idx, point_idx)
-    table_hovered_row: Option<usize>,       // Row index hovered in table
-    show_data_table: bool,
-    show_stats_panel: bool,
-    row_filter: String,
-    scroll_to_row: Option<usize>,
-    show_spc_limits: bool,
-    sigma_multiplier: f64,
-    show_sigma_zones: bool,
-    show_outliers: bool,
-    outlier_threshold: f64,
-    show_moving_avg: bool,
-    ma_window: usize,
-    show_ewma: bool,
-    ewma_lambda: f64,
-    show_regression: bool,
-    regression_order: usize,
-    show_histogram: bool,
-    histogram_bins: usize,
-    show_boxplot: bool,
-    show_capability: bool,
-    spec_lower: f64,
-    spec_upper: f64,
-    show_we_rules: bool,
-    we_violations: Vec<WEViolation>,  // Detailed WE violations
-    excursion_rows: Vec<usize>,  // Row indices with excursions
-    sort_column: Option<usize>,
-    sort_ascending: bool,
-    // Filtering
-    filter_empty: bool,
-    filter_y_min: Option<f64>,
-    filter_y_max: Option<f64>,
-    filter_x_min: Option<f64>,
-    filter_x_max: Option<f64>,
-    filter_outliers: bool,
-    filter_outlier_sigma: f64,
-    // Performance caching
-    outlier_stats_cache: std::collections::HashMap<usize, (f64, f64)>, // col_idx -> (mean, std_dev)
-    // X-bar R chart
-    xbarr_subgroup_size: usize,
-    // p-chart (proportion chart for attribute data)
-    pchart_sample_size: usize,
 }
 
 impl Default for PlotOxide {
     fn default() -> Self {
         Self {
-            data_source: None,
+            state: state::AppState::default(),
             headers: Vec::new(),
             raw_data: Vec::new(),
             data: Vec::new(),
-            x_index: 0,
-            use_row_index: false,
-            y_indices: vec![],
-            current_file: None,
-            recent_files: vec![],
-            dark_mode: true,
-            show_help: false,
-            downsample_threshold: 5000,
-            last_selected_series: None,
-            reset_bounds: false,
-            show_grid: true,
-            show_legend: true,
-            allow_zoom: true,
-            allow_drag: true,
-            line_style: LineStyle::Line,
-            plot_mode: PlotMode::Scatter,
-            x_is_timestamp: false,
-            hovered_point: None,
-            selected_point: None,
-            table_hovered_row: None,
-            show_data_table: false,
-            show_stats_panel: false,
-            row_filter: String::new(),
-            scroll_to_row: None,
-            show_spc_limits: false,
-            sigma_multiplier: 3.0,
-            show_sigma_zones: false,
-            show_outliers: false,
-            outlier_threshold: 3.0,
-            show_moving_avg: false,
-            ma_window: 10,
-            show_ewma: false,
-            ewma_lambda: 0.2,
-            show_regression: false,
-            regression_order: 1,
-            show_histogram: false,
-            histogram_bins: 20,
-            show_boxplot: false,
-            show_capability: false,
-            spec_lower: 0.0,
-            spec_upper: 100.0,
-            show_we_rules: false,
-            we_violations: vec![],
-            excursion_rows: vec![],
-            sort_column: None,
-            sort_ascending: true,
-            filter_empty: false,
-            filter_y_min: None,
-            filter_y_max: None,
-            filter_x_min: None,
-            filter_x_max: None,
-            filter_outliers: false,
-            filter_outlier_sigma: 3.0,
-            outlier_stats_cache: std::collections::HashMap::new(),
-            xbarr_subgroup_size: 5,
-            pchart_sample_size: 50,
         }
     }
 }
@@ -284,7 +159,7 @@ impl PlotOxide {
     // Check if a data point passes all active filters
     fn passes_filters(&self, row_idx: usize, x_val: f64, y_val: f64, y_idx: usize) -> bool {
         // Check empty data filter (only for selected Y columns)
-        if self.filter_empty && self.y_indices.contains(&y_idx) {
+        if self.state.filters.filter_empty && self.state.view.y_indices.contains(&y_idx) {
             if row_idx < self.raw_data.len() && y_idx < self.raw_data[row_idx].len() {
                 let raw_val = &self.raw_data[row_idx][y_idx];
                 if raw_val.trim().is_empty() || raw_val == "NaN" || raw_val == "nan" {
@@ -294,34 +169,34 @@ impl PlotOxide {
         }
 
         // Check X range filter
-        if let Some(min) = self.filter_x_min {
+        if let Some(min) = self.state.filters.filter_x_min {
             if x_val < min {
                 return false;
             }
         }
-        if let Some(max) = self.filter_x_max {
+        if let Some(max) = self.state.filters.filter_x_max {
             if x_val > max {
                 return false;
             }
         }
 
         // Check Y range filter
-        if let Some(min) = self.filter_y_min {
+        if let Some(min) = self.state.filters.filter_y_min {
             if y_val < min {
                 return false;
             }
         }
-        if let Some(max) = self.filter_y_max {
+        if let Some(max) = self.state.filters.filter_y_max {
             if y_val > max {
                 return false;
             }
         }
 
         // Check outlier filter (using cached statistics)
-        if self.filter_outliers {
-            if let Some(&(mean, std_dev)) = self.outlier_stats_cache.get(&y_idx) {
+        if self.state.filters.filter_outliers {
+            if let Some(&(mean, std_dev)) = self.state.outlier_stats_cache.get(&y_idx) {
                 let z_score = ((y_val - mean) / std_dev).abs();
-                if z_score > self.filter_outlier_sigma {
+                if z_score > self.state.filters.filter_outlier_sigma {
                     return false;
                 }
             }
@@ -330,10 +205,9 @@ impl PlotOxide {
         true
     }
 
-    fn load_csv(&mut self, path: PathBuf) -> Result<(), String> {
+    fn load_csv(&mut self, path: PathBuf) -> Result<(), PlotError> {
         // Use new DataSource for loading
-        let data_source = data::DataSource::load(&path)
-            .map_err(|e| format!("Failed to load file: {}", e))?;
+        let data_source = data::DataSource::load(&path)?;
 
         // Extract data for legacy compatibility
         let headers = data_source.column_names();
@@ -341,65 +215,65 @@ impl PlotOxide {
         let data = data_source.as_row_major_f64();
 
         // Store both new and legacy representations
-        self.data_source = Some(data_source);
+        self.state.data = Some(data_source);
         self.headers = headers;
         self.raw_data = raw_data;
         self.data = data;
-        self.x_index = 0;
-        self.y_indices = if self.headers.len() > 1 { vec![1] } else { vec![] };
+        self.state.view.x_index = 0;
+        self.state.view.y_indices = if self.headers.len() > 1 { vec![1] } else { vec![] };
 
         // Update recent files list
-        if !self.recent_files.contains(&path) {
-            self.recent_files.insert(0, path.clone());
-            if self.recent_files.len() > 5 {
-                self.recent_files.truncate(5);
+        if !self.state.recent_files.contains(&path) {
+            self.state.recent_files.insert(0, path.clone());
+            if self.state.recent_files.len() > 5 {
+                self.state.recent_files.truncate(5);
             }
         } else {
             // Move to front
-            self.recent_files.retain(|p| p != &path);
-            self.recent_files.insert(0, path.clone());
+            self.state.recent_files.retain(|p| p != &path);
+            self.state.recent_files.insert(0, path.clone());
         }
 
-        self.current_file = Some(path);
-        self.reset_bounds = true; // Reset to auto-fit when loading new data
+        self.state.current_file = Some(path);
+        self.state.view.reset_bounds = true; // Reset to auto-fit when loading new data
 
         // Detect if X column is timestamp
-        self.x_is_timestamp = self.is_column_timestamp(self.x_index);
+        self.state.view.x_is_timestamp = self.is_column_timestamp(self.state.view.x_index);
 
         // Invalidate caches
-        self.outlier_stats_cache.clear();
+        self.state.outlier_stats_cache.clear();
 
         Ok(())
     }
 
     fn reset_view(&mut self) {
-        self.reset_bounds = true;
+        self.state.view.reset_bounds = true;
     }
 
-    fn save_config(&self) {
+    fn save_config(&mut self) {
         let config = ViewConfig {
-            show_grid: self.show_grid,
-            show_legend: self.show_legend,
-            line_style: self.line_style,
-            show_spc_limits: self.show_spc_limits,
-            sigma_multiplier: self.sigma_multiplier,
-            show_sigma_zones: self.show_sigma_zones,
-            show_outliers: self.show_outliers,
-            outlier_threshold: self.outlier_threshold,
-            show_moving_avg: self.show_moving_avg,
-            ma_window: self.ma_window,
-            show_ewma: self.show_ewma,
-            ewma_lambda: self.ewma_lambda,
-            show_regression: self.show_regression,
-            regression_order: self.regression_order,
-            show_histogram: self.show_histogram,
-            histogram_bins: self.histogram_bins,
-            show_boxplot: self.show_boxplot,
-            show_capability: self.show_capability,
-            spec_lower: self.spec_lower,
-            spec_upper: self.spec_upper,
-            show_we_rules: self.show_we_rules,
-            dark_mode: self.dark_mode,
+            show_grid: self.state.view.show_grid,
+            show_legend: self.state.view.show_legend,
+            line_style: self.state.view.line_style,
+            show_spc_limits: self.state.spc.show_spc_limits,
+            sigma_multiplier: self.state.spc.sigma_multiplier,
+            show_sigma_zones: self.state.spc.show_sigma_zones,
+            show_outliers: self.state.spc.show_outliers,
+            outlier_threshold: self.state.spc.outlier_threshold,
+            show_moving_avg: self.state.spc.show_moving_avg,
+            ma_window: self.state.spc.ma_window,
+            show_ewma: self.state.spc.show_ewma,
+            ewma_lambda: self.state.spc.ewma_lambda,
+            show_regression: self.state.spc.show_regression,
+            regression_order: self.state.spc.regression_order,
+            show_histogram: self.state.view.show_histogram,
+            histogram_bins: self.state.view.histogram_bins,
+            show_boxplot: self.state.view.show_boxplot,
+            show_capability: self.state.spc.show_capability,
+            spec_lower: self.state.spc.spec_lower,
+            spec_upper: self.state.spc.spec_upper,
+            show_we_rules: self.state.spc.show_we_rules,
+            dark_mode: self.state.view.dark_mode,
         };
 
         if let Some(path) = rfd::FileDialog::new()
@@ -407,9 +281,14 @@ impl PlotOxide {
             .set_file_name("view_config.json")
             .save_file()
         {
-            if let Ok(json) = serde_json::to_string_pretty(&config) {
-                if let Err(e) = std::fs::write(&path, json) {
-                    eprintln!("Failed to save config: {}", e);
+            match serde_json::to_string_pretty(&config) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&path, json) {
+                        self.state.ui.set_error(format!("Failed to save config: {}", e));
+                    }
+                }
+                Err(e) => {
+                    self.state.ui.set_error(format!("Failed to serialize config: {}", e));
                 }
             }
         }
@@ -420,32 +299,40 @@ impl PlotOxide {
             .add_filter("JSON", &["json"])
             .pick_file()
         {
-            if let Ok(contents) = std::fs::read_to_string(&path) {
-                if let Ok(config) = serde_json::from_str::<ViewConfig>(&contents) {
-                    self.show_grid = config.show_grid;
-                    self.show_legend = config.show_legend;
-                    self.line_style = config.line_style;
-                    self.show_spc_limits = config.show_spc_limits;
-                    self.sigma_multiplier = config.sigma_multiplier;
-                    self.show_sigma_zones = config.show_sigma_zones;
-                    self.show_outliers = config.show_outliers;
-                    self.outlier_threshold = config.outlier_threshold;
-                    self.show_moving_avg = config.show_moving_avg;
-                    self.ma_window = config.ma_window;
-                    self.show_ewma = config.show_ewma;
-                    self.ewma_lambda = config.ewma_lambda;
-                    self.show_regression = config.show_regression;
-                    self.regression_order = config.regression_order;
-                    self.show_histogram = config.show_histogram;
-                    self.histogram_bins = config.histogram_bins;
-                    self.show_boxplot = config.show_boxplot;
-                    self.show_capability = config.show_capability;
-                    self.spec_lower = config.spec_lower;
-                    self.spec_upper = config.spec_upper;
-                    self.show_we_rules = config.show_we_rules;
-                    self.dark_mode = config.dark_mode;
-                } else {
-                    eprintln!("Failed to parse config file");
+            match std::fs::read_to_string(&path) {
+                Ok(contents) => {
+                    match serde_json::from_str::<ViewConfig>(&contents) {
+                        Ok(config) => {
+                            self.state.view.show_grid = config.show_grid;
+                            self.state.view.show_legend = config.show_legend;
+                            self.state.view.line_style = config.line_style;
+                            self.state.spc.show_spc_limits = config.show_spc_limits;
+                            self.state.spc.sigma_multiplier = config.sigma_multiplier;
+                            self.state.spc.show_sigma_zones = config.show_sigma_zones;
+                            self.state.spc.show_outliers = config.show_outliers;
+                            self.state.spc.outlier_threshold = config.outlier_threshold;
+                            self.state.spc.show_moving_avg = config.show_moving_avg;
+                            self.state.spc.ma_window = config.ma_window;
+                            self.state.spc.show_ewma = config.show_ewma;
+                            self.state.spc.ewma_lambda = config.ewma_lambda;
+                            self.state.spc.show_regression = config.show_regression;
+                            self.state.spc.regression_order = config.regression_order;
+                            self.state.view.show_histogram = config.show_histogram;
+                            self.state.view.histogram_bins = config.histogram_bins;
+                            self.state.view.show_boxplot = config.show_boxplot;
+                            self.state.spc.show_capability = config.show_capability;
+                            self.state.spc.spec_lower = config.spec_lower;
+                            self.state.spc.spec_upper = config.spec_upper;
+                            self.state.spc.show_we_rules = config.show_we_rules;
+                            self.state.view.dark_mode = config.dark_mode;
+                        }
+                        Err(e) => {
+                            self.state.ui.set_error(format!("Failed to parse config file: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.state.ui.set_error(format!("Failed to read config file: {}", e));
                 }
             }
         }
@@ -878,7 +765,7 @@ impl PlotOxide {
         (cp, cpk)
     }
 
-    fn export_csv(&self) {
+    fn export_csv(&mut self) {
         if self.data.is_empty() {
             return;
         }
@@ -894,7 +781,7 @@ impl PlotOxide {
             let mut writer = match std::fs::File::create(&path) {
                 Ok(f) => std::io::BufWriter::new(f),
                 Err(e) => {
-                    eprintln!("Failed to create file: {}", e);
+                    self.state.ui.set_error(format!("Failed to create file: {}", e));
                     return;
                 }
             };
@@ -902,7 +789,7 @@ impl PlotOxide {
             // Write header
             let header_line = self.headers.join(",");
             if let Err(e) = writeln!(writer, "{}", header_line) {
-                eprintln!("Failed to write header: {}", e);
+                self.state.ui.set_error(format!("Failed to write header: {}", e));
                 return;
             }
 
@@ -910,13 +797,13 @@ impl PlotOxide {
             for row in &self.raw_data {
                 let row_line = row.join(",");
                 if let Err(e) = writeln!(writer, "{}", row_line) {
-                    eprintln!("Failed to write row: {}", e);
+                    self.state.ui.set_error(format!("Failed to write row: {}", e));
                     return;
                 }
             }
 
             if let Err(e) = writer.flush() {
-                eprintln!("Failed to flush writer: {}", e);
+                self.state.ui.set_error(format!("Failed to flush writer: {}", e));
             }
         }
     }
@@ -1018,7 +905,7 @@ impl PlotOxide {
 impl App for PlotOxide {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Set theme
-        if self.dark_mode {
+        if self.state.view.dark_mode {
             ctx.set_visuals(egui::Visuals::dark());
         } else {
             ctx.set_visuals(egui::Visuals::light());
@@ -1027,22 +914,22 @@ impl App for PlotOxide {
         // Handle keyboard shortcuts
         ctx.input(|i| {
             if i.key_pressed(egui::Key::R) {
-                self.reset_bounds = true;
+                self.state.view.reset_bounds = true;
             }
             if i.key_pressed(egui::Key::G) {
-                self.show_grid = !self.show_grid;
+                self.state.view.show_grid = !self.state.view.show_grid;
             }
             if i.key_pressed(egui::Key::L) {
-                self.show_legend = !self.show_legend;
+                self.state.view.show_legend = !self.state.view.show_legend;
             }
             if i.key_pressed(egui::Key::T) {
-                self.dark_mode = !self.dark_mode;
+                self.state.view.dark_mode = !self.state.view.dark_mode;
             }
             if i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::F1) {
-                self.show_help = !self.show_help;
+                self.state.view.show_help = !self.state.view.show_help;
             }
             if i.key_pressed(egui::Key::Escape) {
-                self.show_help = false;
+                self.state.view.show_help = false;
             }
         });
 
@@ -1055,11 +942,11 @@ impl App for PlotOxide {
                 ui.heading("Y Series");
                 ui.separator();
 
-                let old_y_indices = self.y_indices.clone();
+                let old_y_indices = self.state.view.y_indices.clone();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (i, header) in self.headers.iter().enumerate() {
-                        let is_selected = self.y_indices.contains(&i);
+                        let is_selected = self.state.view.y_indices.contains(&i);
 
                         // Check for sigma violations for ALL columns (independent of selection)
                         let violation_color = if !self.data.is_empty() {
@@ -1090,7 +977,7 @@ impl App for PlotOxide {
                         };
 
                         let color = if is_selected {
-                            Self::get_series_color(self.y_indices.iter().position(|&x| x == i).unwrap_or(0))
+                            Self::get_series_color(self.state.view.y_indices.iter().position(|&x| x == i).unwrap_or(0))
                         } else {
                             egui::Color32::GRAY
                         };
@@ -1112,36 +999,36 @@ impl App for PlotOxide {
                             if response.clicked() {
                                 if shift_held {
                                     // Range select
-                                    if let Some(last) = self.last_selected_series {
+                                    if let Some(last) = self.state.view.last_selected_series {
                                         let start = last.min(i);
                                         let end = last.max(i);
                                         if ctrl_held {
                                             // Add range to existing selection
                                             for idx in start..=end {
-                                                if !self.y_indices.contains(&idx) {
-                                                    self.y_indices.push(idx);
+                                                if !self.state.view.y_indices.contains(&idx) {
+                                                    self.state.view.y_indices.push(idx);
                                                 }
                                             }
                                         } else {
                                             // Replace with range
-                                            self.y_indices = (start..=end).collect();
+                                            self.state.view.y_indices = (start..=end).collect();
                                         }
                                     } else {
-                                        self.y_indices = vec![i];
+                                        self.state.view.y_indices = vec![i];
                                     }
-                                    self.last_selected_series = Some(i);
+                                    self.state.view.last_selected_series = Some(i);
                                 } else if ctrl_held {
                                     // Toggle individual item
                                     if is_selected {
-                                        self.y_indices.retain(|&x| x != i);
+                                        self.state.view.y_indices.retain(|&x| x != i);
                                     } else {
-                                        self.y_indices.push(i);
+                                        self.state.view.y_indices.push(i);
                                     }
-                                    self.last_selected_series = Some(i);
+                                    self.state.view.last_selected_series = Some(i);
                                 } else {
                                     // Single-select mode (replace)
-                                    self.y_indices = vec![i];
-                                    self.last_selected_series = Some(i);
+                                    self.state.view.y_indices = vec![i];
+                                    self.state.view.last_selected_series = Some(i);
                                 }
                             }
                         });
@@ -1149,15 +1036,15 @@ impl App for PlotOxide {
                 });
 
                 // Clear point selection if series changed
-                if self.y_indices != old_y_indices {
-                    self.selected_point = None;
-                    self.reset_bounds = true;
+                if self.state.view.y_indices != old_y_indices {
+                    self.state.view.selected_point = None;
+                    self.state.view.reset_bounds = true;
                 }
             });
         }
 
         // Statistics bottom panel
-        if self.show_stats_panel && !self.headers.is_empty() && !self.y_indices.is_empty() {
+        if self.state.view.show_stats_panel && !self.headers.is_empty() && !self.state.view.y_indices.is_empty() {
             TopBottomPanel::bottom("stats_panel").default_height(120.0).show(ctx, |ui| {
                 ui.heading("Statistics Summary");
                 ui.separator();
@@ -1165,15 +1052,15 @@ impl App for PlotOxide {
                 egui::ScrollArea::horizontal().show(ui, |ui| {
                     ui.horizontal(|ui| {
                         // Calculate all series data
-                        let all_series: Vec<Vec<[f64; 2]>> = self.y_indices.iter()
+                        let all_series: Vec<Vec<[f64; 2]>> = self.state.view.y_indices.iter()
                             .map(|&y_idx| {
                                 self.data.iter()
-                                    .map(|row| [row[self.x_index], row[y_idx]])
+                                    .map(|row| [row[self.state.view.x_index], row[y_idx]])
                                     .collect()
                             })
                             .collect();
 
-                        for (series_idx, &y_idx) in self.y_indices.iter().enumerate() {
+                        for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
                             let color = Self::get_series_color(series_idx);
                             let name = &self.headers[y_idx];
                             let y_values: Vec<f64> = all_series[series_idx].iter().map(|p| p[1]).collect();
@@ -1200,8 +1087,8 @@ impl App for PlotOxide {
                                         ui.separator();
                                         ui.label(format!("σ: {:.4}", std_dev));
                                     });
-                                    if self.show_capability {
-                                        let (cp, cpk) = Self::calculate_process_capability(&y_values, self.spec_lower, self.spec_upper);
+                                    if self.state.spc.show_capability {
+                                        let (cp, cpk) = Self::calculate_process_capability(&y_values, self.state.spc.spec_lower, self.state.spc.spec_upper);
                                         ui.horizontal(|ui| {
                                             ui.label(format!("Cp: {:.3}", cp));
                                             ui.separator();
@@ -1217,29 +1104,29 @@ impl App for PlotOxide {
         }
 
         // Data table side panel
-        if self.show_data_table && !self.raw_data.is_empty() {
+        if self.state.view.show_data_table && !self.raw_data.is_empty() {
             SidePanel::right("data_panel").default_width(400.0).show(ctx, |ui| {
                 ui.heading("Data Table");
 
                 ui.horizontal(|ui| {
                     ui.label("Filter:");
-                    ui.text_edit_singleline(&mut self.row_filter);
+                    ui.text_edit_singleline(&mut self.state.ui.row_filter);
                     if ui.button("✖").clicked() {
-                        self.row_filter.clear();
+                        self.state.ui.row_filter.clear();
                     }
                 });
 
                 ui.separator();
 
                 // Build list of displayed columns (X + Y series)
-                let mut display_cols = vec![self.x_index];
-                display_cols.extend(&self.y_indices);
+                let mut display_cols = vec![self.state.view.x_index];
+                display_cols.extend(&self.state.view.y_indices);
                 display_cols.sort_unstable();
                 display_cols.dedup();
 
                 let mut table_scroll = egui::ScrollArea::vertical().id_salt("data_table_scroll");
 
-                if let Some(row_to_scroll) = self.scroll_to_row.take() {
+                if let Some(row_to_scroll) = self.state.ui.scroll_to_row.take() {
                     table_scroll = table_scroll.vertical_scroll_offset((row_to_scroll as f32) * 18.0);
                 }
 
@@ -1256,17 +1143,17 @@ impl App for PlotOxide {
                         for &col_idx in &display_cols {
                             header.col(|ui| {
                                 let label = &self.headers[col_idx];
-                                let sort_indicator = if self.sort_column == Some(col_idx) {
-                                    if self.sort_ascending { " ↑" } else { " ↓" }
+                                let sort_indicator = if self.state.ui.sort_column == Some(col_idx) {
+                                    if self.state.ui.sort_ascending { " ↑" } else { " ↓" }
                                 } else {
                                     ""
                                 };
                                 if ui.button(format!("{}{}", label, sort_indicator)).clicked() {
-                                    if self.sort_column == Some(col_idx) {
-                                        self.sort_ascending = !self.sort_ascending;
+                                    if self.state.ui.sort_column == Some(col_idx) {
+                                        self.state.ui.sort_ascending = !self.state.ui.sort_ascending;
                                     } else {
-                                        self.sort_column = Some(col_idx);
-                                        self.sort_ascending = true;
+                                        self.state.ui.sort_column = Some(col_idx);
+                                        self.state.ui.sort_ascending = true;
                                     }
                                 }
                             });
@@ -1277,19 +1164,19 @@ impl App for PlotOxide {
                         let mut row_indices: Vec<usize> = (0..self.raw_data.len()).collect();
 
                         // Apply filter
-                        if !self.row_filter.is_empty() {
-                            let filter_lower = self.row_filter.to_lowercase();
+                        if !self.state.ui.row_filter.is_empty() {
+                            let filter_lower = self.state.ui.row_filter.to_lowercase();
                             row_indices.retain(|&idx| {
                                 self.raw_data[idx].iter().any(|cell| cell.to_lowercase().contains(&filter_lower))
                             });
                         }
 
                         // Apply sort
-                        if let Some(sort_col) = self.sort_column {
+                        if let Some(sort_col) = self.state.ui.sort_column {
                             row_indices.sort_by(|&a, &b| {
                                 let val_a = &self.data[a][sort_col];
                                 let val_b = &self.data[b][sort_col];
-                                if self.sort_ascending {
+                                if self.state.ui.sort_ascending {
                                     val_a.partial_cmp(val_b).unwrap_or(std::cmp::Ordering::Equal)
                                 } else {
                                     val_b.partial_cmp(val_a).unwrap_or(std::cmp::Ordering::Equal)
@@ -1299,9 +1186,9 @@ impl App for PlotOxide {
 
                         for &row_idx in &row_indices {
                             let row_data = &self.raw_data[row_idx];
-                            let is_hovered = self.hovered_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
-                            let is_selected = self.selected_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
-                            let is_excursion = self.excursion_rows.contains(&row_idx);
+                            let is_hovered = self.state.view.hovered_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
+                            let is_selected = self.state.view.selected_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
+                            let is_excursion = self.state.spc.excursion_rows.contains(&row_idx);
 
                             body.row(18.0, |mut row_ui| {
                                 if is_selected || is_hovered {
@@ -1320,9 +1207,9 @@ impl App for PlotOxide {
                                     let cell = &row_data[col_idx];
                                     row_ui.col(|ui| {
                                         // Highlight X column or Y series
-                                        if col_idx == self.x_index {
+                                        if col_idx == self.state.view.x_index {
                                             ui.strong(cell);
-                                        } else if self.y_indices.contains(&col_idx) {
+                                        } else if self.state.view.y_indices.contains(&col_idx) {
                                             ui.strong(cell);
                                         } else {
                                             ui.label(cell);
@@ -1332,7 +1219,7 @@ impl App for PlotOxide {
 
                                 // Detect if this row is hovered (after all columns)
                                 if row_ui.response().hovered() {
-                                    self.table_hovered_row = Some(row_idx);
+                                    self.state.view.table_hovered_row = Some(row_idx);
                                 }
                             });
                         }
@@ -1350,22 +1237,23 @@ impl App for PlotOxide {
                         .pick_file()
                     {
                         if let Err(e) = self.load_csv(path) {
-                            eprintln!("Error loading file: {}", e);
+                            self.state.ui.set_error(e.user_message());
                         }
                     }
                 }
 
                 // Recent files menu
-                if !self.recent_files.is_empty() {
+                if !self.state.recent_files.is_empty() {
                     egui::ComboBox::from_label("Recent")
                         .selected_text("▼")
                         .show_ui(ui, |ui| {
-                            for path in self.recent_files.clone().iter() {
+                            // Need to clone to avoid borrow checker issues with load_csv
+                            for path in self.state.recent_files.clone().iter() {
                                 if let Some(name) = path.file_name() {
                                     if ui.button(name.to_string_lossy()).clicked() {
                                         let path_clone = path.clone();
                                         if let Err(e) = self.load_csv(path_clone) {
-                                            eprintln!("Error loading file: {}", e);
+                                            self.state.ui.set_error(e.user_message());
                                         }
                                     }
                                 }
@@ -1373,41 +1261,41 @@ impl App for PlotOxide {
                         });
                 }
 
-                if let Some(ref file) = self.current_file {
-                    ui.label(format!("File: {}", file.display()));
-                }
+                // Display current file using Option combinator
+                self.state.current_file
+                    .as_ref()
+                    .map(|file| ui.label(format!("File: {}", file.display())));
             });
 
             ui.separator();
 
-            // Handle drag and drop
+            // Handle drag and drop using Option combinators
             ctx.input(|i| {
-                if !i.raw.dropped_files.is_empty() {
-                    if let Some(dropped_file) = i.raw.dropped_files.first() {
-                        if let Some(ref path) = dropped_file.path {
-                            if let Err(e) = self.load_csv(path.clone()) {
-                                eprintln!("Error loading dropped file: {}", e);
-                            }
+                i.raw.dropped_files
+                    .first()
+                    .and_then(|f| f.path.as_ref())
+                    .map(|path| {
+                        if let Err(e) = self.load_csv(path.clone()) {
+                            self.state.ui.set_error(e.user_message());
                         }
-                    }
-                }
+                    });
             });
 
             // Show plot only if we have data
             if !self.headers.is_empty() && !self.data.is_empty() {
                 // Axis selection and controls
                 ui.horizontal(|ui| {
-                    let old_x = self.x_index;
-                    let old_use_row = self.use_row_index;
+                    let old_x = self.state.view.x_index;
+                    let old_use_row = self.state.view.use_row_index;
 
-                    ui.checkbox(&mut self.use_row_index, "Row Index");
+                    ui.checkbox(&mut self.state.view.use_row_index, "Row Index");
 
-                    if !self.use_row_index {
+                    if !self.state.view.use_row_index {
                         ComboBox::from_label("X Axis")
-                            .selected_text(&self.headers[self.x_index])
+                            .selected_text(&self.headers[self.state.view.x_index])
                             .show_ui(ui, |ui| {
                                 for (i, h) in self.headers.iter().enumerate() {
-                                    ui.selectable_value(&mut self.x_index, i, h);
+                                    ui.selectable_value(&mut self.state.view.x_index, i, h);
                                 }
                             });
                     } else {
@@ -1415,13 +1303,13 @@ impl App for PlotOxide {
                     }
 
                     // Update timestamp flag if X axis changed
-                    if old_x != self.x_index || old_use_row != self.use_row_index {
-                        if !self.use_row_index {
-                            self.x_is_timestamp = self.is_column_timestamp(self.x_index);
+                    if old_x != self.state.view.x_index || old_use_row != self.state.view.use_row_index {
+                        if !self.state.view.use_row_index {
+                            self.state.view.x_is_timestamp = self.is_column_timestamp(self.state.view.x_index);
                         } else {
-                            self.x_is_timestamp = false;
+                            self.state.view.x_is_timestamp = false;
                         }
-                        self.reset_bounds = true;
+                        self.state.view.reset_bounds = true;
                     }
 
                     ui.separator();
@@ -1434,12 +1322,12 @@ impl App for PlotOxide {
                 // Plot options
                 ui.horizontal(|ui| {
                     ui.label("Display:");
-                    ui.checkbox(&mut self.show_grid, "Grid (G)");
-                    ui.checkbox(&mut self.show_legend, "Legend (L)");
-                    ui.checkbox(&mut self.allow_zoom, "Zoom");
-                    ui.checkbox(&mut self.allow_drag, "Pan");
-                    ui.checkbox(&mut self.show_data_table, "Data Table");
-                    ui.checkbox(&mut self.show_stats_panel, "Statistics");
+                    ui.checkbox(&mut self.state.view.show_grid, "Grid (G)");
+                    ui.checkbox(&mut self.state.view.show_legend, "Legend (L)");
+                    ui.checkbox(&mut self.state.view.allow_zoom, "Zoom");
+                    ui.checkbox(&mut self.state.view.allow_drag, "Pan");
+                    ui.checkbox(&mut self.state.view.show_data_table, "Data Table");
+                    ui.checkbox(&mut self.state.view.show_stats_panel, "Statistics");
 
                     ui.separator();
                     ui.label("Export:");
@@ -1456,151 +1344,151 @@ impl App for PlotOxide {
                     }
 
                     ui.separator();
-                    if ui.button(if self.dark_mode { "� Dark" } else { "☀ Light" }).clicked() {
-                        self.dark_mode = !self.dark_mode;
+                    if ui.button(if self.state.view.dark_mode { "� Dark" } else { "☀ Light" }).clicked() {
+                        self.state.view.dark_mode = !self.state.view.dark_mode;
                     }
 
                     ui.separator();
 
                     ui.label("Plot Mode:");
-                    ui.radio_value(&mut self.plot_mode, PlotMode::Scatter, "Scatter/Line");
-                    ui.radio_value(&mut self.plot_mode, PlotMode::Histogram, "Histogram");
-                    if self.plot_mode == PlotMode::Histogram {
+                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Scatter, "Scatter/Line");
+                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Histogram, "Histogram");
+                    if self.state.view.plot_mode == PlotMode::Histogram {
                         ui.label("Bins:");
-                        ui.add(egui::Slider::new(&mut self.histogram_bins, 5..=50));
+                        ui.add(egui::Slider::new(&mut self.state.view.histogram_bins, 5..=50));
                     }
-                    ui.radio_value(&mut self.plot_mode, PlotMode::BoxPlot, "Box Plot");
-                    ui.radio_value(&mut self.plot_mode, PlotMode::Pareto, "Pareto");
-                    ui.radio_value(&mut self.plot_mode, PlotMode::XbarR, "X-bar & R");
-                    if self.plot_mode == PlotMode::XbarR {
+                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::BoxPlot, "Box Plot");
+                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Pareto, "Pareto");
+                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::XbarR, "X-bar & R");
+                    if self.state.view.plot_mode == PlotMode::XbarR {
                         ui.label("Subgroup:");
-                        ui.add(egui::Slider::new(&mut self.xbarr_subgroup_size, 2..=10));
+                        ui.add(egui::Slider::new(&mut self.state.spc.xbarr_subgroup_size, 2..=10));
                     }
-                    ui.radio_value(&mut self.plot_mode, PlotMode::PChart, "p-chart");
-                    if self.plot_mode == PlotMode::PChart {
+                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::PChart, "p-chart");
+                    if self.state.view.plot_mode == PlotMode::PChart {
                         ui.label("Sample n:");
-                        ui.add(egui::Slider::new(&mut self.pchart_sample_size, 10..=200));
+                        ui.add(egui::Slider::new(&mut self.state.spc.pchart_sample_size, 10..=200));
                     }
 
-                    if self.plot_mode == PlotMode::Scatter {
+                    if self.state.view.plot_mode == PlotMode::Scatter {
                         ui.separator();
                         ui.label("Style:");
-                        ui.radio_value(&mut self.line_style, LineStyle::Line, "Line");
-                        ui.radio_value(&mut self.line_style, LineStyle::Points, "Points");
-                        ui.radio_value(&mut self.line_style, LineStyle::LineAndPoints, "Both");
+                        ui.radio_value(&mut self.state.view.line_style, LineStyle::Line, "Line");
+                        ui.radio_value(&mut self.state.view.line_style, LineStyle::Points, "Points");
+                        ui.radio_value(&mut self.state.view.line_style, LineStyle::LineAndPoints, "Both");
                     }
 
                     ui.separator();
                     if ui.button("? Help").clicked() {
-                        self.show_help = !self.show_help;
+                        self.state.view.show_help = !self.state.view.show_help;
                     }
                 });
 
                 // Only show SPC/Analysis controls in Scatter mode
-                if self.plot_mode == PlotMode::Scatter {
+                if self.state.view.plot_mode == PlotMode::Scatter {
                 // SPC Controls
                 ui.horizontal(|ui| {
                     ui.label("SPC:");
-                    ui.checkbox(&mut self.show_spc_limits, "Control Limits");
-                    if self.show_spc_limits {
+                    ui.checkbox(&mut self.state.spc.show_spc_limits, "Control Limits");
+                    if self.state.spc.show_spc_limits {
                         ui.label("σ:");
-                        ui.add(egui::Slider::new(&mut self.sigma_multiplier, 1.0..=6.0).step_by(0.5));
+                        ui.add(egui::Slider::new(&mut self.state.spc.sigma_multiplier, 1.0..=6.0).step_by(0.5));
                     }
-                    ui.checkbox(&mut self.show_sigma_zones, "Zones");
-                    ui.checkbox(&mut self.show_we_rules, "WE Rules");
+                    ui.checkbox(&mut self.state.spc.show_sigma_zones, "Zones");
+                    ui.checkbox(&mut self.state.spc.show_we_rules, "WE Rules");
                     ui.separator();
-                    ui.checkbox(&mut self.show_capability, "Cp/Cpk");
-                    if self.show_capability {
+                    ui.checkbox(&mut self.state.spc.show_capability, "Cp/Cpk");
+                    if self.state.spc.show_capability {
                         ui.label("LSL:");
-                        ui.add(egui::DragValue::new(&mut self.spec_lower).speed(0.1));
+                        ui.add(egui::DragValue::new(&mut self.state.spc.spec_lower).speed(0.1));
                         ui.label("USL:");
-                        ui.add(egui::DragValue::new(&mut self.spec_upper).speed(0.1));
+                        ui.add(egui::DragValue::new(&mut self.state.spc.spec_upper).speed(0.1));
                     }
                     ui.separator();
-                    ui.checkbox(&mut self.show_outliers, "Outliers");
-                    if self.show_outliers {
+                    ui.checkbox(&mut self.state.spc.show_outliers, "Outliers");
+                    if self.state.spc.show_outliers {
                         ui.label("Z:");
-                        ui.add(egui::Slider::new(&mut self.outlier_threshold, 2.0..=6.0).step_by(0.5));
+                        ui.add(egui::Slider::new(&mut self.state.spc.outlier_threshold, 2.0..=6.0).step_by(0.5));
                     }
                     ui.separator();
-                    ui.checkbox(&mut self.show_moving_avg, "MA");
-                    if self.show_moving_avg {
+                    ui.checkbox(&mut self.state.spc.show_moving_avg, "MA");
+                    if self.state.spc.show_moving_avg {
                         ui.label("Win:");
-                        ui.add(egui::Slider::new(&mut self.ma_window, 3..=50));
+                        ui.add(egui::Slider::new(&mut self.state.spc.ma_window, 3..=50));
                     }
-                    ui.checkbox(&mut self.show_ewma, "EWMA");
-                    if self.show_ewma {
+                    ui.checkbox(&mut self.state.spc.show_ewma, "EWMA");
+                    if self.state.spc.show_ewma {
                         ui.label("λ:");
-                        ui.add(egui::Slider::new(&mut self.ewma_lambda, 0.05..=0.5).step_by(0.05));
+                        ui.add(egui::Slider::new(&mut self.state.spc.ewma_lambda, 0.05..=0.5).step_by(0.05));
                     }
                     ui.separator();
-                    ui.checkbox(&mut self.show_regression, "Regression");
-                    if self.show_regression {
+                    ui.checkbox(&mut self.state.spc.show_regression, "Regression");
+                    if self.state.spc.show_regression {
                         ui.label("Order:");
-                        ui.add(egui::Slider::new(&mut self.regression_order, 1..=4));
+                        ui.add(egui::Slider::new(&mut self.state.spc.regression_order, 1..=4));
                     }
                 });
 
                 // Data Filtering Controls
                 ui.horizontal(|ui| {
                     ui.label("Filters:");
-                    ui.checkbox(&mut self.filter_empty, "Empty (Y series only)");
+                    ui.checkbox(&mut self.state.filters.filter_empty, "Empty (Y series only)");
 
                     ui.separator();
 
                     // Y min/max filter
                     ui.label("Y Range:");
-                    let mut y_min_enabled = self.filter_y_min.is_some();
+                    let mut y_min_enabled = self.state.filters.filter_y_min.is_some();
                     ui.checkbox(&mut y_min_enabled, "Min");
                     if y_min_enabled {
-                        let mut val = self.filter_y_min.unwrap_or(0.0);
+                        let mut val = self.state.filters.filter_y_min.unwrap_or(0.0);
                         ui.add(egui::DragValue::new(&mut val).speed(0.1));
-                        self.filter_y_min = Some(val);
+                        self.state.filters.filter_y_min = Some(val);
                     } else {
-                        self.filter_y_min = None;
+                        self.state.filters.filter_y_min = None;
                     }
 
-                    let mut y_max_enabled = self.filter_y_max.is_some();
+                    let mut y_max_enabled = self.state.filters.filter_y_max.is_some();
                     ui.checkbox(&mut y_max_enabled, "Max");
                     if y_max_enabled {
-                        let mut val = self.filter_y_max.unwrap_or(100.0);
+                        let mut val = self.state.filters.filter_y_max.unwrap_or(100.0);
                         ui.add(egui::DragValue::new(&mut val).speed(0.1));
-                        self.filter_y_max = Some(val);
+                        self.state.filters.filter_y_max = Some(val);
                     } else {
-                        self.filter_y_max = None;
+                        self.state.filters.filter_y_max = None;
                     }
 
                     ui.separator();
 
                     // X range filter
                     ui.label("X Range:");
-                    let mut x_min_enabled = self.filter_x_min.is_some();
+                    let mut x_min_enabled = self.state.filters.filter_x_min.is_some();
                     ui.checkbox(&mut x_min_enabled, "Min");
                     if x_min_enabled {
-                        let mut val = self.filter_x_min.unwrap_or(0.0);
+                        let mut val = self.state.filters.filter_x_min.unwrap_or(0.0);
                         ui.add(egui::DragValue::new(&mut val).speed(0.1));
-                        self.filter_x_min = Some(val);
+                        self.state.filters.filter_x_min = Some(val);
                     } else {
-                        self.filter_x_min = None;
+                        self.state.filters.filter_x_min = None;
                     }
 
-                    let mut x_max_enabled = self.filter_x_max.is_some();
+                    let mut x_max_enabled = self.state.filters.filter_x_max.is_some();
                     ui.checkbox(&mut x_max_enabled, "Max");
                     if x_max_enabled {
-                        let mut val = self.filter_x_max.unwrap_or(100.0);
+                        let mut val = self.state.filters.filter_x_max.unwrap_or(100.0);
                         ui.add(egui::DragValue::new(&mut val).speed(0.1));
-                        self.filter_x_max = Some(val);
+                        self.state.filters.filter_x_max = Some(val);
                     } else {
-                        self.filter_x_max = None;
+                        self.state.filters.filter_x_max = None;
                     }
 
                     ui.separator();
 
                     // Outlier filter
-                    ui.checkbox(&mut self.filter_outliers, "Filter Outliers");
-                    if self.filter_outliers {
+                    ui.checkbox(&mut self.state.filters.filter_outliers, "Filter Outliers");
+                    if self.state.filters.filter_outliers {
                         ui.label("Z:");
-                        ui.add(egui::Slider::new(&mut self.filter_outlier_sigma, 2.0..=6.0).step_by(0.5));
+                        ui.add(egui::Slider::new(&mut self.state.filters.filter_outlier_sigma, 2.0..=6.0).step_by(0.5));
                     }
                 });
                 }
@@ -1608,7 +1496,7 @@ impl App for PlotOxide {
                 ui.separator();
 
                 // Skip if no Y series selected
-                if self.y_indices.is_empty() {
+                if self.state.view.y_indices.is_empty() {
                     ui.vertical_centered(|ui| {
                         ui.label("Select at least one Y series to plot");
                     });
@@ -1616,25 +1504,25 @@ impl App for PlotOxide {
                 }
 
                 // Pre-calculate statistics for outlier filtering (performance optimization)
-                if self.filter_outliers {
-                    self.outlier_stats_cache.clear();
-                    for &y_idx in &self.y_indices {
+                if self.state.filters.filter_outliers {
+                    self.state.outlier_stats_cache.clear();
+                    for &y_idx in &self.state.view.y_indices {
                         let y_values: Vec<f64> = self.data.iter().map(|row| row[y_idx]).collect();
                         let stats = Self::calculate_statistics(&y_values);
-                        self.outlier_stats_cache.insert(y_idx, stats);
+                        self.state.outlier_stats_cache.insert(y_idx, stats);
                     }
                 }
 
                 // Create data for all series with filtering
-                let all_series: Vec<Vec<[f64; 2]>> = self.y_indices.iter()
+                let all_series: Vec<Vec<[f64; 2]>> = self.state.view.y_indices.iter()
                     .map(|&y_idx| {
                         let points: Vec<[f64; 2]> = self.data.iter()
                             .enumerate()
                             .filter_map(|(row_idx, row)| {
-                                let x_val = if self.use_row_index {
+                                let x_val = if self.state.view.use_row_index {
                                     row_idx as f64
                                 } else {
-                                    row[self.x_index]
+                                    row[self.state.view.x_index]
                                 };
                                 let y_val = row[y_idx];
 
@@ -1648,8 +1536,8 @@ impl App for PlotOxide {
                             .collect();
 
                         // Downsample if dataset is large
-                        if points.len() > self.downsample_threshold {
-                            Self::downsample_lttb(&points, self.downsample_threshold)
+                        if points.len() > self.state.view.downsample_threshold {
+                            Self::downsample_lttb(&points, self.state.view.downsample_threshold)
                         } else {
                             points
                         }
@@ -1662,31 +1550,31 @@ impl App for PlotOxide {
                 let alt_held = ctx.input(|i| i.modifiers.alt);
 
                 let mut plot = Plot::new("plot")
-                    .allow_zoom(self.allow_zoom)
-                    .allow_drag(self.allow_drag && !alt_held)
-                    .allow_boxed_zoom(self.allow_zoom && alt_held)
-                    .allow_scroll(self.allow_zoom)
-                    .show_grid(self.show_grid)
+                    .allow_zoom(self.state.view.allow_zoom)
+                    .allow_drag(self.state.view.allow_drag && !alt_held)
+                    .allow_boxed_zoom(self.state.view.allow_zoom && alt_held)
+                    .allow_scroll(self.state.view.allow_zoom)
+                    .show_grid(self.state.view.show_grid)
                     .height(ui.available_height() - 10.0);
 
                 // Apply axis-locked zoom if modifiers held
-                if shift_held && self.allow_zoom {
+                if shift_held && self.state.view.allow_zoom {
                     plot = plot.allow_zoom([true, false]).allow_boxed_zoom(false); // X-only
-                } else if ctrl_held && self.allow_zoom {
+                } else if ctrl_held && self.state.view.allow_zoom {
                     plot = plot.allow_zoom([false, true]).allow_boxed_zoom(false); // Y-only
                 }
 
-                if self.reset_bounds {
+                if self.state.view.reset_bounds {
                     plot = plot.reset();
-                    self.reset_bounds = false;
+                    self.state.view.reset_bounds = false;
                 }
 
-                if self.show_legend {
+                if self.state.view.show_legend {
                     plot = plot.legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop));
                 }
 
                 // Add custom axis formatters for timestamps
-                if self.x_is_timestamp {
+                if self.state.view.x_is_timestamp {
                     plot = plot.x_axis_formatter(|mark, _range| {
                         let dt = DateTime::<Utc>::from_timestamp(mark.value as i64, 0);
                         if let Some(dt) = dt {
@@ -1698,15 +1586,15 @@ impl App for PlotOxide {
                 }
 
                 let plot_response = plot.show(ui, |plot_ui| {
-                    match self.plot_mode {
+                    match self.state.view.plot_mode {
                         PlotMode::Scatter => {
                             // Plot each series in scatter mode
-                            for (series_idx, (&y_idx, points_data)) in self.y_indices.iter().zip(&all_series).enumerate() {
+                            for (series_idx, (&y_idx, points_data)) in self.state.view.y_indices.iter().zip(&all_series).enumerate() {
                                 let color = Self::get_series_color(series_idx);
                                 let name = &self.headers[y_idx];
 
                         // Draw sigma zone lines if enabled
-                        if self.show_sigma_zones && !points_data.is_empty() {
+                        if self.state.spc.show_sigma_zones && !points_data.is_empty() {
                             let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
                             let (mean, std_dev) = Self::calculate_statistics(&y_values);
 
@@ -1742,15 +1630,15 @@ impl App for PlotOxide {
                         }
 
                         // Draw specification limits if capability enabled
-                        if self.show_capability {
+                        if self.state.spc.show_capability {
                             plot_ui.hline(
-                                HLine::new("LSL", self.spec_lower)
+                                HLine::new("LSL", self.state.spc.spec_lower)
                                     .color(egui::Color32::from_rgb(255, 140, 0))
                                     .style(egui_plot::LineStyle::Solid)
                                     .width(2.0),
                             );
                             plot_ui.hline(
-                                HLine::new("USL", self.spec_upper)
+                                HLine::new("USL", self.state.spc.spec_upper)
                                     .color(egui::Color32::from_rgb(255, 140, 0))
                                     .style(egui_plot::LineStyle::Solid)
                                     .width(2.0),
@@ -1758,11 +1646,11 @@ impl App for PlotOxide {
                         }
 
                         // Draw SPC control limits if enabled
-                        if self.show_spc_limits {
+                        if self.state.spc.show_spc_limits {
                             let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
                             let (mean, std_dev) = Self::calculate_statistics(&y_values);
-                            let ucl = mean + self.sigma_multiplier * std_dev;
-                            let lcl = mean - self.sigma_multiplier * std_dev;
+                            let ucl = mean + self.state.spc.sigma_multiplier * std_dev;
+                            let lcl = mean - self.state.spc.sigma_multiplier * std_dev;
 
                             // Center line (mean)
                             plot_ui.hline(
@@ -1790,7 +1678,7 @@ impl App for PlotOxide {
                         }
 
                         // Draw data series
-                        match self.line_style {
+                        match self.state.view.line_style {
                             LineStyle::Line => {
                                 plot_ui.line(Line::new(name, points_data.clone()).color(color));
                             }
@@ -1804,9 +1692,9 @@ impl App for PlotOxide {
                         }
 
                         // Highlight outliers
-                        if self.show_outliers {
+                        if self.state.spc.show_outliers {
                             let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let outlier_indices = Self::detect_outliers(&y_values, self.outlier_threshold);
+                            let outlier_indices = Self::detect_outliers(&y_values, self.state.spc.outlier_threshold);
                             let outlier_points: Vec<[f64; 2]> = outlier_indices.iter()
                                 .map(|&i| points_data[i])
                                 .collect();
@@ -1823,7 +1711,7 @@ impl App for PlotOxide {
                         }
 
                         // Highlight Western Electric violations
-                        if self.show_we_rules {
+                        if self.state.spc.show_we_rules {
                             let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
                             let we_indices = Self::detect_western_electric_violations(&y_values);
                             let we_points: Vec<[f64; 2]> = we_indices.iter()
@@ -1842,7 +1730,7 @@ impl App for PlotOxide {
                         }
 
                         // Highlight selected point
-                        if let Some((sel_series, sel_point)) = self.selected_point {
+                        if let Some((sel_series, sel_point)) = self.state.view.selected_point {
                             if series_idx == sel_series && sel_point < points_data.len() {
                                 plot_ui.points(
                                     Points::new("", vec![points_data[sel_point]])
@@ -1855,7 +1743,7 @@ impl App for PlotOxide {
                         }
 
                         // Highlight table-hovered point (use white for visibility)
-                        if let Some(row_idx) = self.table_hovered_row {
+                        if let Some(row_idx) = self.state.view.table_hovered_row {
                             if row_idx < points_data.len() {
                                 plot_ui.points(
                                     Points::new("", vec![points_data[row_idx]])
@@ -1868,9 +1756,9 @@ impl App for PlotOxide {
                         }
 
                         // Draw moving average if enabled
-                        if self.show_moving_avg && points_data.len() >= self.ma_window {
+                        if self.state.spc.show_moving_avg && points_data.len() >= self.state.spc.ma_window {
                             let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let ma_y = Self::calculate_sma(&y_values, self.ma_window);
+                            let ma_y = Self::calculate_sma(&y_values, self.state.spc.ma_window);
 
                             // Map MA y-values to actual x-values
                             let ma_points: Vec<[f64; 2]> = ma_y.iter()
@@ -1883,7 +1771,7 @@ impl App for PlotOxide {
                             if !ma_points.is_empty() {
                                 let ma_color = egui::Color32::from_rgb(100, 100, 100);
                                 plot_ui.line(
-                                    Line::new(format!("{} MA({})", name, self.ma_window), ma_points)
+                                    Line::new(format!("{} MA({})", name, self.state.spc.ma_window), ma_points)
                                         .color(ma_color)
                                         .style(egui_plot::LineStyle::Dashed { length: 5.0 })
                                         .width(1.5),
@@ -1892,9 +1780,9 @@ impl App for PlotOxide {
                         }
 
                         // Draw EWMA if enabled
-                        if self.show_ewma && !points_data.is_empty() {
+                        if self.state.spc.show_ewma && !points_data.is_empty() {
                             let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let ewma_y = Self::calculate_ewma(&y_values, self.ewma_lambda);
+                            let ewma_y = Self::calculate_ewma(&y_values, self.state.spc.ewma_lambda);
 
                             // Map EWMA y-values to actual x-values
                             let ewma_points: Vec<[f64; 2]> = ewma_y.iter()
@@ -1907,7 +1795,7 @@ impl App for PlotOxide {
                             if !ewma_points.is_empty() {
                                 let ewma_color = egui::Color32::from_rgb(80, 150, 80);
                                 plot_ui.line(
-                                    Line::new(format!("{} EWMA(λ={:.2})", name, self.ewma_lambda), ewma_points)
+                                    Line::new(format!("{} EWMA(λ={:.2})", name, self.state.spc.ewma_lambda), ewma_points)
                                         .color(ewma_color)
                                         .style(egui_plot::LineStyle::Solid)
                                         .width(2.0),
@@ -1916,8 +1804,8 @@ impl App for PlotOxide {
                         }
 
                         // Draw regression if enabled
-                        if self.show_regression && points_data.len() >= self.regression_order + 1 {
-                            if self.regression_order == 1 {
+                        if self.state.spc.show_regression && points_data.len() >= self.state.spc.regression_order + 1 {
+                            if self.state.spc.regression_order == 1 {
                                 // Linear regression
                                 if let Some((slope, intercept, r2)) = Self::linear_regression(points_data) {
                                     let x_min = points_data.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
@@ -1937,7 +1825,7 @@ impl App for PlotOxide {
                                 }
                             } else {
                                 // Polynomial regression
-                                if let Some((coeffs, r2)) = Self::polynomial_regression(points_data, self.regression_order) {
+                                if let Some((coeffs, r2)) = Self::polynomial_regression(points_data, self.state.spc.regression_order) {
                                     let x_min = points_data.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
                                     let x_max = points_data.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max);
 
@@ -1954,7 +1842,7 @@ impl App for PlotOxide {
                                         .collect();
 
                                     plot_ui.line(
-                                        Line::new(format!("{} Poly{} (R²={:.3})", name, self.regression_order, r2), poly_line)
+                                        Line::new(format!("{} Poly{} (R²={:.3})", name, self.state.spc.regression_order, r2), poly_line)
                                             .color(egui::Color32::from_rgb(180, 100, 180))
                                             .style(egui_plot::LineStyle::Solid)
                                             .width(2.0),
@@ -1968,7 +1856,7 @@ impl App for PlotOxide {
                         PlotMode::Histogram => {
                             // Histogram mode - show histogram with proper bin widths
                             // Note: We ignore the X-axis data and work only with Y-values
-                            for (series_idx, &y_idx) in self.y_indices.iter().enumerate() {
+                            for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
                                 let color = Self::get_series_color(series_idx);
                                 let name = &self.headers[y_idx];
 
@@ -1978,12 +1866,12 @@ impl App for PlotOxide {
                                     .filter(|&v| !v.is_nan() && v.is_finite())
                                     .collect();
 
-                                let (hist_data, _min, bin_width) = Self::calculate_histogram(&y_values, self.histogram_bins);
+                                let (hist_data, _min, bin_width) = Self::calculate_histogram(&y_values, self.state.view.histogram_bins);
 
                                 if !hist_data.is_empty() {
                                     // Calculate bar width based on bin_width and number of series
-                                    let bar_width = bin_width * 0.9 / self.y_indices.len() as f64;
-                                    let offset = (series_idx as f64 - (self.y_indices.len() - 1) as f64 / 2.0) * bar_width;
+                                    let bar_width = bin_width * 0.9 / self.state.view.y_indices.len() as f64;
+                                    let offset = (series_idx as f64 - (self.state.view.y_indices.len() - 1) as f64 / 2.0) * bar_width;
 
                                     let bars: Vec<Bar> = hist_data.iter()
                                         .map(|&[x, count]| {
@@ -2001,7 +1889,7 @@ impl App for PlotOxide {
                         }
                         PlotMode::BoxPlot => {
                             // Box plot mode - only show box plots
-                            for (series_idx, (&y_idx, points_data)) in self.y_indices.iter().zip(&all_series).enumerate() {
+                            for (series_idx, (&y_idx, points_data)) in self.state.view.y_indices.iter().zip(&all_series).enumerate() {
                                 let color = Self::get_series_color(series_idx);
                                 let name = &self.headers[y_idx];
                                 let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
@@ -2019,7 +1907,7 @@ impl App for PlotOxide {
                         }
                         PlotMode::Pareto => {
                             // Pareto chart mode - frequency bars + cumulative line
-                            for (series_idx, &y_idx) in self.y_indices.iter().enumerate() {
+                            for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
                                 let color = Self::get_series_color(series_idx);
                                 let name = &self.headers[y_idx];
 
@@ -2033,8 +1921,8 @@ impl App for PlotOxide {
 
                                 if !freq_data.is_empty() {
                                     // Draw frequency bars
-                                    let bar_width = 0.8 / self.y_indices.len() as f64;
-                                    let offset = (series_idx as f64 - (self.y_indices.len() - 1) as f64 / 2.0) * bar_width;
+                                    let bar_width = 0.8 / self.state.view.y_indices.len() as f64;
+                                    let offset = (series_idx as f64 - (self.state.view.y_indices.len() - 1) as f64 / 2.0) * bar_width;
 
                                     let bars: Vec<Bar> = freq_data.iter()
                                         .enumerate()
@@ -2078,7 +1966,7 @@ impl App for PlotOxide {
                         PlotMode::XbarR => {
                             // X-bar and R chart mode - shows process mean and range control charts
                             // This mode requires displaying TWO charts, so we'll show only the first Y-series
-                            if let Some(&y_idx) = self.y_indices.first() {
+                            if let Some(&y_idx) = self.state.view.y_indices.first() {
                                 let color = Self::get_series_color(0);
                                 let name = &self.headers[y_idx];
 
@@ -2089,7 +1977,7 @@ impl App for PlotOxide {
                                     .collect();
 
                                 let (xbar_points, r_points, xbar_mean, xbar_ucl, xbar_lcl, r_mean, r_ucl, r_lcl) =
-                                    Self::calculate_xbarr(&y_values, self.xbarr_subgroup_size);
+                                    Self::calculate_xbarr(&y_values, self.state.spc.xbarr_subgroup_size);
 
                                 if !xbar_points.is_empty() {
                                     // Note: egui_plot doesn't support dual Y-axes easily
@@ -2150,7 +2038,7 @@ impl App for PlotOxide {
                         }
                         PlotMode::PChart => {
                             // p-chart mode - proportion defective control chart
-                            if let Some(&y_idx) = self.y_indices.first() {
+                            if let Some(&y_idx) = self.state.view.y_indices.first() {
                                 let color = Self::get_series_color(0);
                                 let name = &self.headers[y_idx];
 
@@ -2160,7 +2048,7 @@ impl App for PlotOxide {
                                     .filter(|&v| !v.is_nan() && v.is_finite())
                                     .collect();
 
-                                let (proportions, p_bar, ucl, lcl) = Self::calculate_pchart(&defects, self.pchart_sample_size);
+                                let (proportions, p_bar, ucl, lcl) = Self::calculate_pchart(&defects, self.state.spc.pchart_sample_size);
 
                                 if !proportions.is_empty() {
                                     // Draw proportion points and line
@@ -2202,19 +2090,19 @@ impl App for PlotOxide {
                 let mut all_excursions = std::collections::HashSet::new();
                 let mut all_we_violations = Vec::new();
 
-                if self.show_outliers || self.show_spc_limits || self.show_we_rules {
-                    for series_idx in 0..self.y_indices.len() {
+                if self.state.spc.show_outliers || self.state.spc.show_spc_limits || self.state.spc.show_we_rules {
+                    for series_idx in 0..self.state.view.y_indices.len() {
                         let y_values: Vec<f64> = all_series[series_idx].iter().map(|p| p[1]).collect();
 
-                        if self.show_outliers {
-                            let outliers = Self::detect_outliers(&y_values, self.outlier_threshold);
+                        if self.state.spc.show_outliers {
+                            let outliers = Self::detect_outliers(&y_values, self.state.spc.outlier_threshold);
                             all_excursions.extend(outliers);
                         }
 
-                        if self.show_spc_limits {
+                        if self.state.spc.show_spc_limits {
                             let (mean, std_dev) = Self::calculate_statistics(&y_values);
-                            let ucl = mean + self.sigma_multiplier * std_dev;
-                            let lcl = mean - self.sigma_multiplier * std_dev;
+                            let ucl = mean + self.state.spc.sigma_multiplier * std_dev;
+                            let lcl = mean - self.state.spc.sigma_multiplier * std_dev;
 
                             for (i, &v) in y_values.iter().enumerate() {
                                 if v > ucl || v < lcl {
@@ -2223,7 +2111,7 @@ impl App for PlotOxide {
                             }
                         }
 
-                        if self.show_we_rules {
+                        if self.state.spc.show_we_rules {
                             let we_detailed = Self::detect_western_electric_violations_detailed(&y_values);
                             for violation in &we_detailed {
                                 all_excursions.insert(violation.point_index);
@@ -2232,26 +2120,26 @@ impl App for PlotOxide {
                         }
                     }
                 }
-                self.excursion_rows = all_excursions.into_iter().collect();
-                self.we_violations = all_we_violations;
+                self.state.spc.excursion_rows = all_excursions.into_iter().collect();
+                self.state.spc.we_violations = all_we_violations;
 
                 // Handle right-click context menu
                 plot_response.response.context_menu(|ui| {
                     if ui.button("Reset View").clicked() {
-                        self.reset_bounds = true;
+                        self.state.view.reset_bounds = true;
                         ui.close();
                     }
                     if ui.button("Toggle Grid").clicked() {
-                        self.show_grid = !self.show_grid;
+                        self.state.view.show_grid = !self.state.view.show_grid;
                         ui.close();
                     }
                     if ui.button("Toggle Legend").clicked() {
-                        self.show_legend = !self.show_legend;
+                        self.state.view.show_legend = !self.state.view.show_legend;
                         ui.close();
                     }
                     ui.separator();
                     if ui.button("Clear Selection").clicked() {
-                        self.selected_point = None;
+                        self.state.view.selected_point = None;
                         ui.close();
                     }
                 });
@@ -2285,11 +2173,11 @@ impl App for PlotOxide {
 
                     // Only show tooltip if close enough
                     if min_dist < 0.0004 {
-                        self.hovered_point = Some((closest_series_idx, closest_point_idx));
+                        self.state.view.hovered_point = Some((closest_series_idx, closest_point_idx));
                         let point = &all_series[closest_series_idx][closest_point_idx];
-                        let y_idx = self.y_indices[closest_series_idx];
+                        let y_idx = self.state.view.y_indices[closest_series_idx];
 
-                        let x_label = if self.x_is_timestamp {
+                        let x_label = if self.state.view.x_is_timestamp {
                             DateTime::<Utc>::from_timestamp(point[0] as i64, 0)
                                 .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
                                 .unwrap_or_else(|| format!("{:.2}", point[0]))
@@ -2308,13 +2196,13 @@ impl App for PlotOxide {
 
                         plot_response.response.on_hover_ui(|ui| {
                             ui.label(format!("Row: {}", closest_point_idx + 1));
-                            ui.label(format!("{}: {}", self.headers[self.x_index], x_label));
+                            ui.label(format!("{}: {}", self.headers[self.state.view.x_index], x_label));
                             let color = Self::get_series_color(closest_series_idx);
                             ui.colored_label(color, format!("{}: {}", self.headers[y_idx], y_label));
 
                             // Show WE rule violations if any
-                            if self.show_we_rules {
-                                for violation in &self.we_violations {
+                            if self.state.spc.show_we_rules {
+                                for violation in &self.state.spc.we_violations {
                                     if violation.point_index == closest_point_idx {
                                         ui.separator();
                                         ui.colored_label(egui::Color32::from_rgb(255, 165, 0), "⚠ WE Rule Violations:");
@@ -2327,10 +2215,10 @@ impl App for PlotOxide {
                             }
                         });
                     } else {
-                        self.hovered_point = None;
+                        self.state.view.hovered_point = None;
                     }
                 } else {
-                    self.hovered_point = None;
+                    self.state.view.hovered_point = None;
                 }
 
 
@@ -2361,15 +2249,15 @@ impl App for PlotOxide {
                         // Select if close enough, otherwise deselect
                         if min_dist < 0.0004 {
                             // Clear selection if switching to a different series
-                            if let Some((prev_series, _)) = self.selected_point {
+                            if let Some((prev_series, _)) = self.state.view.selected_point {
                                 if prev_series != closest_series_idx {
-                                    self.selected_point = None;
+                                    self.state.view.selected_point = None;
                                 }
                             }
-                            self.selected_point = Some((closest_series_idx, closest_point_idx));
-                            self.scroll_to_row = Some(closest_point_idx);
+                            self.state.view.selected_point = Some((closest_series_idx, closest_point_idx));
+                            self.state.ui.scroll_to_row = Some(closest_point_idx);
                         } else {
-                            self.selected_point = None;
+                            self.state.view.selected_point = None;
                         }
                     }
                 }
@@ -2384,18 +2272,18 @@ impl App for PlotOxide {
             ui.add_space(ui.available_height() - 20.0);
             ui.separator();
             ui.horizontal(|ui| {
-                if let Some(ref file) = self.current_file {
+                if let Some(ref file) = self.state.current_file {
                     if let Some(name) = file.file_name() {
                         ui.label(format!("� {}", name.to_string_lossy()));
                         ui.separator();
                     }
                 }
                 ui.label(format!("Rows: {} | Cols: {}", self.data.len(), self.headers.len()));
-                if !self.y_indices.is_empty() {
+                if !self.state.view.y_indices.is_empty() {
                     ui.separator();
-                    ui.label(format!("Series: {}", self.y_indices.len()));
+                    ui.label(format!("Series: {}", self.state.view.y_indices.len()));
                 }
-                if let Some((_series_idx, point_idx)) = self.selected_point {
+                if let Some((_series_idx, point_idx)) = self.state.view.selected_point {
                     ui.separator();
                     ui.label(format!("Selected: Row {}", point_idx + 1));
                 }
@@ -2403,7 +2291,7 @@ impl App for PlotOxide {
         });
 
         // Help overlay
-        if self.show_help {
+        if self.state.view.show_help {
             egui::Window::new("� Keyboard Shortcuts")
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .collapsible(false)
@@ -2435,7 +2323,7 @@ impl App for PlotOxide {
 
                     ui.separator();
                     if ui.button("Close").clicked() {
-                        self.show_help = false;
+                        self.state.view.show_help = false;
                     }
                 });
         }
