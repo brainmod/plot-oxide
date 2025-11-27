@@ -11,6 +11,15 @@ use serde::{Deserialize, Serialize};
 // Data module for Polars-based data handling
 mod data;
 
+// Application constants
+mod constants;
+
+// Error handling
+mod error;
+
+// Application state modules
+mod state;
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum LineStyle {
     Line,
@@ -61,139 +70,22 @@ struct ViewConfig {
 }
 
 struct PlotOxide {
-    // New Polars-based data handling
-    data_source: Option<data::DataSource>,
+    // Application state (Phase 2 refactoring)
+    state: state::AppState,
 
-    // Legacy fields (to be removed after full migration)
+    // Legacy fields for backward compatibility (to be gradually removed)
     headers: Vec<String>,
     raw_data: Vec<Vec<String>>,  // Store raw string data
     data: Vec<Vec<f64>>,         // Numeric data for plotting
-
-    x_index: usize,
-    use_row_index: bool,
-    y_indices: Vec<usize>,       // Multiple Y series
-    current_file: Option<PathBuf>,
-    recent_files: Vec<PathBuf>,
-    dark_mode: bool,
-    show_help: bool,
-    downsample_threshold: usize,
-    last_selected_series: Option<usize>,
-    reset_bounds: bool,
-    show_grid: bool,
-    show_legend: bool,
-    allow_zoom: bool,
-    allow_drag: bool,
-    line_style: LineStyle,
-    plot_mode: PlotMode,
-    x_is_timestamp: bool,
-    hovered_point: Option<(usize, usize)>, // (series_idx, point_idx)
-    selected_point: Option<(usize, usize)>, // (series_idx, point_idx)
-    table_hovered_row: Option<usize>,       // Row index hovered in table
-    show_data_table: bool,
-    show_stats_panel: bool,
-    row_filter: String,
-    scroll_to_row: Option<usize>,
-    show_spc_limits: bool,
-    sigma_multiplier: f64,
-    show_sigma_zones: bool,
-    show_outliers: bool,
-    outlier_threshold: f64,
-    show_moving_avg: bool,
-    ma_window: usize,
-    show_ewma: bool,
-    ewma_lambda: f64,
-    show_regression: bool,
-    regression_order: usize,
-    show_histogram: bool,
-    histogram_bins: usize,
-    show_boxplot: bool,
-    show_capability: bool,
-    spec_lower: f64,
-    spec_upper: f64,
-    show_we_rules: bool,
-    we_violations: Vec<WEViolation>,  // Detailed WE violations
-    excursion_rows: Vec<usize>,  // Row indices with excursions
-    sort_column: Option<usize>,
-    sort_ascending: bool,
-    // Filtering
-    filter_empty: bool,
-    filter_y_min: Option<f64>,
-    filter_y_max: Option<f64>,
-    filter_x_min: Option<f64>,
-    filter_x_max: Option<f64>,
-    filter_outliers: bool,
-    filter_outlier_sigma: f64,
-    // Performance caching
-    outlier_stats_cache: std::collections::HashMap<usize, (f64, f64)>, // col_idx -> (mean, std_dev)
-    // X-bar R chart
-    xbarr_subgroup_size: usize,
-    // p-chart (proportion chart for attribute data)
-    pchart_sample_size: usize,
 }
 
 impl Default for PlotOxide {
     fn default() -> Self {
         Self {
-            data_source: None,
+            state: state::AppState::default(),
             headers: Vec::new(),
             raw_data: Vec::new(),
             data: Vec::new(),
-            x_index: 0,
-            use_row_index: false,
-            y_indices: vec![],
-            current_file: None,
-            recent_files: vec![],
-            dark_mode: true,
-            show_help: false,
-            downsample_threshold: 5000,
-            last_selected_series: None,
-            reset_bounds: false,
-            show_grid: true,
-            show_legend: true,
-            allow_zoom: true,
-            allow_drag: true,
-            line_style: LineStyle::Line,
-            plot_mode: PlotMode::Scatter,
-            x_is_timestamp: false,
-            hovered_point: None,
-            selected_point: None,
-            table_hovered_row: None,
-            show_data_table: false,
-            show_stats_panel: false,
-            row_filter: String::new(),
-            scroll_to_row: None,
-            show_spc_limits: false,
-            sigma_multiplier: 3.0,
-            show_sigma_zones: false,
-            show_outliers: false,
-            outlier_threshold: 3.0,
-            show_moving_avg: false,
-            ma_window: 10,
-            show_ewma: false,
-            ewma_lambda: 0.2,
-            show_regression: false,
-            regression_order: 1,
-            show_histogram: false,
-            histogram_bins: 20,
-            show_boxplot: false,
-            show_capability: false,
-            spec_lower: 0.0,
-            spec_upper: 100.0,
-            show_we_rules: false,
-            we_violations: vec![],
-            excursion_rows: vec![],
-            sort_column: None,
-            sort_ascending: true,
-            filter_empty: false,
-            filter_y_min: None,
-            filter_y_max: None,
-            filter_x_min: None,
-            filter_x_max: None,
-            filter_outliers: false,
-            filter_outlier_sigma: 3.0,
-            outlier_stats_cache: std::collections::HashMap::new(),
-            xbarr_subgroup_size: 5,
-            pchart_sample_size: 50,
         }
     }
 }
