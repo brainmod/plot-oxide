@@ -64,7 +64,8 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
     });
 
     // Show plot only if we have data
-    if !app.headers.is_empty() && !app.data.is_empty() {
+    if app.state.has_data() {
+        let headers = app.headers();
         // Axis selection and controls
         ui.horizontal(|ui| {
             let old_x = app.state.view.x_index;
@@ -74,9 +75,9 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
 
             if !app.state.view.use_row_index {
                 ComboBox::from_label("X Axis")
-                    .selected_text(&app.headers[app.state.view.x_index])
+                    .selected_text(&headers[app.state.view.x_index])
                     .show_ui(ui, |ui| {
-                        for (i, h) in app.headers.iter().enumerate() {
+                        for (i, h) in headers.iter().enumerate() {
                             ui.selectable_value(&mut app.state.view.x_index, i, h);
                         }
                     });

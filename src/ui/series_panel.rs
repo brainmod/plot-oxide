@@ -2,6 +2,10 @@ use crate::app::PlotOxide;
 
 /// Render the Y series selection panel (left sidebar)
 pub fn render_series_panel(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut eframe::egui::Ui) {
+    // Get data from DataSource
+    let headers = app.headers();
+    let data = app.data();
+
     let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
     let shift_held = ctx.input(|i| i.modifiers.shift);
 
@@ -11,12 +15,12 @@ pub fn render_series_panel(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui:
     let old_y_indices = app.state.view.y_indices.clone();
 
     eframe::egui::ScrollArea::vertical().show(ui, |ui| {
-        for (i, header) in app.headers.iter().enumerate() {
+        for (i, header) in headers.iter().enumerate() {
             let is_selected = app.state.view.y_indices.contains(&i);
 
             // Check for sigma violations for ALL columns (independent of selection)
-            let violation_color = if !app.data.is_empty() {
-                let y_values: Vec<f64> = app.data.iter().map(|row| row[i]).collect();
+            let violation_color = if !data.is_empty() {
+                let y_values: Vec<f64> = data.iter().map(|row| row[i]).collect();
                 let (mean, std_dev) = PlotOxide::calculate_statistics(&y_values);
                 let mut has_3sigma = false;
                 let mut has_2sigma = false;
