@@ -35,25 +35,36 @@ pub struct ViewConfig {
 pub struct PlotOxide {
     // Application state (Phase 2 refactoring)
     pub state: state::AppState,
-
-    // Legacy fields for backward compatibility (to be gradually removed)
-    pub headers: Vec<String>,
-    pub raw_data: Vec<Vec<String>>,  // Store raw string data
-    pub data: Vec<Vec<f64>>,         // Numeric data for plotting
 }
 
 impl Default for PlotOxide {
     fn default() -> Self {
         Self {
             state: state::AppState::default(),
-            headers: Vec::new(),
-            raw_data: Vec::new(),
-            data: Vec::new(),
         }
     }
 }
 
 impl PlotOxide {
+    // Helper methods to access data through DataSource
+    pub fn headers(&self) -> Vec<String> {
+        self.state.column_names()
+    }
+
+    pub fn raw_data(&self) -> Vec<Vec<String>> {
+        self.state.data
+            .as_ref()
+            .map(|ds| ds.as_row_major_string())
+            .unwrap_or_default()
+    }
+
+    pub fn data(&self) -> Vec<Vec<f64>> {
+        self.state.data
+            .as_ref()
+            .map(|ds| ds.as_row_major_f64())
+            .unwrap_or_default()
+    }
+
     pub fn get_series_color(index: usize) -> eframe::egui::Color32 {
         let colors = [
             eframe::egui::Color32::from_rgb(31, 119, 180),   // Blue
@@ -115,15 +126,16 @@ impl PlotOxide {
     }
 
     pub fn is_column_timestamp(&self, col_index: usize) -> bool {
-        if self.raw_data.is_empty() || col_index >= self.raw_data[0].len() {
+        let raw_data = self.raw_data();
+        if raw_data.is_empty() || col_index >= raw_data[0].len() {
             return false;
         }
 
         // Check first few rows to see if this column contains dates
-        let sample_size = self.raw_data.len().min(10);
+        let sample_size = raw_data.len().min(10);
         let mut timestamp_count = 0;
 
-        for row in self.raw_data.iter().take(sample_size) {
+        for row in raw_data.iter().take(sample_size) {
             if col_index < row.len() {
                 let (_, is_timestamp) = Self::parse_value(&row[col_index]);
                 if is_timestamp {
@@ -140,8 +152,9 @@ impl PlotOxide {
     pub fn passes_filters(&self, row_idx: usize, x_val: f64, y_val: f64, y_idx: usize) -> bool {
         // Check empty data filter (only for selected Y columns)
         if self.state.filters.filter_empty && self.state.view.y_indices.contains(&y_idx) {
-            if row_idx < self.raw_data.len() && y_idx < self.raw_data[row_idx].len() {
-                let raw_val = &self.raw_data[row_idx][y_idx];
+            let raw_data = self.raw_data();
+            if row_idx < raw_data.len() && y_idx < raw_data[row_idx].len() {
+                let raw_val = &raw_data[row_idx][y_idx];
                 if raw_val.trim().is_empty() || raw_val == "NaN" || raw_val == "nan" {
                     return false;
                 }
@@ -189,18 +202,11 @@ impl PlotOxide {
         // Use new DataSource for loading
         let data_source = data::DataSource::load(&path)?;
 
-        // Extract data for legacy compatibility
-        let headers = data_source.column_names();
-        let raw_data = data_source.as_row_major_string();
-        let data = data_source.as_row_major_f64();
-
-        // Store both new and legacy representations
+        // Store data source
+        let num_cols = data_source.column_names().len();
         self.state.data = Some(data_source);
-        self.headers = headers;
-        self.raw_data = raw_data;
-        self.data = data;
         self.state.view.x_index = 0;
-        self.state.view.y_indices = if self.headers.len() > 1 { vec![1] } else { vec![] };
+        self.state.view.y_indices = if num_cols > 1 { vec![1] } else { vec![] };
 
         // Update recent files list
         if !self.state.recent_files.contains(&path) {
@@ -746,7 +752,7 @@ impl PlotOxide {
     }
 
     pub fn export_csv(&mut self) {
-        if self.data.is_empty() {
+        if !self.state.has_data() {
             return;
         }
 
@@ -766,15 +772,19 @@ impl PlotOxide {
                 }
             };
 
+            // Get data from DataSource
+            let headers = self.headers();
+            let raw_data = self.raw_data();
+
             // Write header
-            let header_line = self.headers.join(",");
+            let header_line = headers.join(",");
             if let Err(e) = writeln!(writer, "{}", header_line) {
                 self.state.ui.set_error(format!("Failed to write header: {}", e));
                 return;
             }
 
             // Write data rows
-            for row in &self.raw_data {
+            for row in &raw_data {
                 let row_line = row.join(",");
                 if let Err(e) = writeln!(writer, "{}", row_line) {
                     self.state.ui.set_error(format!("Failed to write row: {}", e));

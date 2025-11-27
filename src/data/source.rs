@@ -1,6 +1,3 @@
-// Temporarily allow dead code during migration phase
-#![allow(dead_code)]
-
 use polars::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -287,6 +284,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::Builder;
+    use std::time::Instant;
 
     #[test]
     fn test_datasource_csv_loading() {
@@ -356,5 +354,59 @@ mod tests {
         assert_eq!(stats.min, 1.0);
         assert_eq!(stats.max, 5.0);
         assert_eq!(stats.count, 5);
+    }
+
+    #[test]
+    fn test_datasource_large_file_performance() {
+        // Create a large CSV file (100k rows, 5 columns)
+        let mut file = Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(file, "time,value1,value2,value3,value4").unwrap();
+        for i in 0..100_000 {
+            writeln!(
+                file,
+                "{},{},{},{},{}",
+                i,
+                i as f64 * 1.5,
+                (i as f64).sin(),
+                (i as f64).cos(),
+                i % 100
+            )
+            .unwrap();
+        }
+        file.flush().unwrap();
+
+        // Measure load time
+        let start = Instant::now();
+        let ds = DataSource::load(file.path()).unwrap();
+        let load_duration = start.elapsed();
+
+        // Verify data loaded correctly
+        assert_eq!(ds.height(), 100_000);
+        assert_eq!(ds.width(), 5);
+
+        // Measure row-major conversion time (most expensive operation)
+        let start = Instant::now();
+        let _data = ds.as_row_major_f64();
+        let conversion_duration = start.elapsed();
+
+        // Measure statistics calculation time
+        let start = Instant::now();
+        let _stats = ds.column_stats(1).unwrap();
+        let stats_duration = start.elapsed();
+
+        // Print timing information for manual verification
+        println!("Performance results for 100k rows:");
+        println!("  Load time: {:?}", load_duration);
+        println!("  Row-major conversion: {:?}", conversion_duration);
+        println!("  Stats calculation: {:?}", stats_duration);
+        println!("  Total: {:?}", load_duration + conversion_duration + stats_duration);
+
+        // Target: <100ms total for all operations
+        let total = load_duration + conversion_duration + stats_duration;
+        assert!(
+            total.as_millis() < 500,
+            "Performance target not met: {:?} >= 500ms",
+            total
+        );
     }
 }

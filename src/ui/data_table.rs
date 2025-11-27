@@ -3,6 +3,11 @@ use egui_extras::{Column, TableBuilder};
 
 /// Render the data table panel (right sidebar)
 pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
+    // Get data from DataSource
+    let headers = app.headers();
+    let raw_data = app.raw_data();
+    let data = app.data();
+
     ui.heading("Data Table");
 
     ui.horizontal(|ui| {
@@ -39,7 +44,7 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
                 });
                 for &col_idx in &display_cols {
                     header.col(|ui| {
-                        let label = &app.headers[col_idx];
+                        let label = &headers[col_idx];
                         let sort_indicator = if app.state.ui.sort_column == Some(col_idx) {
                             if app.state.ui.sort_ascending { " ↑" } else { " ↓" }
                         } else {
@@ -58,21 +63,21 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
             })
             .body(|mut body| {
                 // Calculate row indices (filtering and sorting)
-                let mut row_indices: Vec<usize> = (0..app.raw_data.len()).collect();
+                let mut row_indices: Vec<usize> = (0..raw_data.len()).collect();
 
                 // Apply filter
                 if !app.state.ui.row_filter.is_empty() {
                     let filter_lower = app.state.ui.row_filter.to_lowercase();
                     row_indices.retain(|&idx| {
-                        app.raw_data[idx].iter().any(|cell| cell.to_lowercase().contains(&filter_lower))
+                        raw_data[idx].iter().any(|cell| cell.to_lowercase().contains(&filter_lower))
                     });
                 }
 
                 // Apply sort
                 if let Some(sort_col) = app.state.ui.sort_column {
                     row_indices.sort_by(|&a, &b| {
-                        let val_a = &app.data[a][sort_col];
-                        let val_b = &app.data[b][sort_col];
+                        let val_a = &data[a][sort_col];
+                        let val_b = &data[b][sort_col];
                         if app.state.ui.sort_ascending {
                             val_a.partial_cmp(val_b).unwrap_or(std::cmp::Ordering::Equal)
                         } else {
@@ -82,7 +87,7 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
                 }
 
                 for &row_idx in &row_indices {
-                    let row_data = &app.raw_data[row_idx];
+                    let row_data = &raw_data[row_idx];
                     let is_hovered = app.state.view.hovered_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
                     let is_selected = app.state.view.selected_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
                     let is_excursion = app.state.spc.excursion_rows.contains(&row_idx);
