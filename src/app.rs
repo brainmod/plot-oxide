@@ -167,35 +167,12 @@ impl PlotOxide {
     }
 
     /// Detect if a column contains timestamp data
-    /// Returns true if >75% of sampled values parse as timestamps
+    /// Uses Polars' automatic date/datetime detection for accuracy
     pub fn is_column_timestamp(&self, col_index: usize) -> bool {
-        let raw_data = self.raw_data();
-        if raw_data.is_empty() || col_index >= raw_data[0].len() {
-            return false;
-        }
-
-        // Use larger sample size for more reliable detection (up to 100 rows)
-        let sample_size = raw_data.len().min(100);
-        let mut timestamp_count = 0;
-        let mut valid_values = 0;
-
-        for row in raw_data.iter().take(sample_size) {
-            if col_index < row.len() {
-                let val = &row[col_index];
-                // Skip empty values
-                if val.trim().is_empty() {
-                    continue;
-                }
-                valid_values += 1;
-                let (_, is_timestamp) = Self::parse_value(val);
-                if is_timestamp {
-                    timestamp_count += 1;
-                }
-            }
-        }
-
-        // Need at least 5 valid values and 75% must be timestamps for high confidence
-        valid_values >= 5 && timestamp_count as f64 / valid_values as f64 > 0.75
+        self.state.data
+            .as_ref()
+            .map(|ds| ds.is_datetime_column(col_index))
+            .unwrap_or(false)
     }
 
     // Check if a data point passes all active filters

@@ -58,6 +58,7 @@ impl DataSource {
             "csv" => LazyCsvReader::new(path)
                 .with_has_header(true)
                 .with_infer_schema_length(Some(100))
+                .with_try_parse_dates(true)  // Enable automatic date parsing
                 .finish()?,
             ext => return Err(DataError::UnsupportedFormat(ext.to_string())),
         };
@@ -123,6 +124,7 @@ impl DataSource {
 
     /// Get a column's numeric values as Vec<f64>
     /// Non-numeric values are converted to NaN
+    /// Datetime/Date columns are converted to Unix timestamps (seconds since epoch)
     pub fn column_as_f64(&self, col_idx: usize) -> Result<Vec<f64>, DataError> {
         let col_names = self.column_names();
         if col_idx >= col_names.len() {
@@ -130,6 +132,29 @@ impl DataSource {
         }
 
         let series = self.column_values(&col_names[col_idx])?;
+
+        // Handle datetime/date types by converting to Unix timestamps
+        match series.dtype() {
+            DataType::Datetime(_, _) => {
+                // Convert datetime to Unix timestamp (seconds)
+                let timestamps = series.datetime()
+                    .map_err(|e| DataError::PolarsError(e))?
+                    .into_iter()
+                    .map(|opt| opt.map(|ts| ts as f64 / 1_000_000.0).unwrap_or(f64::NAN))
+                    .collect();
+                return Ok(timestamps);
+            }
+            DataType::Date => {
+                // Convert date to Unix timestamp (days since epoch * seconds per day)
+                let timestamps = series.date()
+                    .map_err(|e| DataError::PolarsError(e))?
+                    .into_iter()
+                    .map(|opt| opt.map(|days| days as f64 * 86400.0).unwrap_or(f64::NAN))
+                    .collect();
+                return Ok(timestamps);
+            }
+            _ => {}
+        }
 
         // Try to cast to f64, if that fails, extract as best we can
         match series.cast(&DataType::Float64) {
@@ -277,6 +302,19 @@ impl DataSource {
         let series = self.get_column_series(col_idx)?;
         Ok(super::stats::calculate_stats(&series))
     }
+
+    /// Check if a column is a datetime or date type
+    pub fn is_datetime_column(&self, col_idx: usize) -> bool {
+        let col_names = self.column_names();
+        if col_idx >= col_names.len() {
+            return false;
+        }
+        if let Ok(series) = self.column_values(&col_names[col_idx]) {
+            matches!(series.dtype(), DataType::Datetime(_, _) | DataType::Date)
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -354,6 +392,38 @@ mod tests {
         assert_eq!(stats.min, 1.0);
         assert_eq!(stats.max, 5.0);
         assert_eq!(stats.count, 5);
+    }
+
+    #[test]
+    fn test_datasource_datetime_parsing() {
+        // Create a temporary CSV file with datetime columns
+        let mut file = Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(file, "date,value").unwrap();
+        writeln!(file, "2024-01-01,10.5").unwrap();
+        writeln!(file, "2024-01-02,15.3").unwrap();
+        writeln!(file, "2024-01-03,12.8").unwrap();
+        file.flush().unwrap();
+
+        // Load with DataSource
+        let ds = DataSource::load(file.path()).unwrap();
+
+        // Verify datetime column is detected
+        assert!(ds.is_datetime_column(0), "Date column should be detected as datetime");
+
+        // Verify datetime values are converted to timestamps
+        let timestamps = ds.column_as_f64(0).unwrap();
+        assert_eq!(timestamps.len(), 3);
+
+        // Verify timestamps are reasonable (between 2024-01-01 and 2024-01-04)
+        let start_ts = 1704067200.0; // 2024-01-01 00:00:00 UTC
+        let end_ts = 1704326400.0;   // 2024-01-04 00:00:00 UTC
+        for &ts in &timestamps {
+            assert!(ts >= start_ts && ts <= end_ts, "Timestamp {} should be between {} and {}", ts, start_ts, end_ts);
+        }
+
+        // Verify numeric column works as expected
+        let values = ds.column_as_f64(1).unwrap();
+        assert_eq!(values, vec![10.5, 15.3, 12.8]);
     }
 
     #[test]

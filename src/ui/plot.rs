@@ -92,8 +92,11 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         // Add custom axis formatters for timestamps
         if app.state.view.x_is_timestamp {
             plot = plot.x_axis_formatter(|mark, _range| {
-                let dt = DateTime::<Utc>::from_timestamp(mark.value as i64, 0);
-                if let Some(dt) = dt {
+                // Handle fractional seconds by extracting seconds and nanoseconds
+                let secs = mark.value.floor() as i64;
+                let nanos = ((mark.value.fract() * 1_000_000_000.0) as u32).min(999_999_999);
+
+                if let Some(dt) = DateTime::<Utc>::from_timestamp(secs, nanos) {
                     // Use space instead of newline to prevent layout issues
                     dt.format("%Y-%m-%d %H:%M").to_string()
                 } else {
