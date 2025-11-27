@@ -6,12 +6,10 @@ use serde::{Deserialize, Serialize};
 /// Western Electric (WE) rule violation record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WEViolation {
-    /// Rule number (1-4)
-    pub rule: u8,
     /// Data point index
-    pub index: usize,
-    /// Description of the violation
-    pub description: String,
+    pub point_index: usize,
+    /// Which rules were violated
+    pub rules: Vec<String>,
 }
 
 /// SPC configuration manages all Statistical Process Control features

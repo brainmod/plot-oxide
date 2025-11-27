@@ -8,8 +8,8 @@ mod spc;
 mod filters;
 mod ui;
 
-pub use view::ViewState;
-pub use spc::SpcConfig;
+pub use view::{ViewState, LineStyle, PlotMode};
+pub use spc::{SpcConfig, WEViolation};
 pub use filters::FilterConfig;
 pub use ui::UiState;
 
