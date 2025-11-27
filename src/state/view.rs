@@ -35,6 +35,17 @@ impl Default for LineStyle {
     }
 }
 
+/// Layout mode for responsive design
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutMode {
+    /// Compact layout for small screens (<800px) - stack panels vertically
+    Compact,
+    /// Normal layout for medium screens (800-1200px) - hide data table by default
+    Normal,
+    /// Wide layout for large screens (>1200px) - show all panels
+    Wide,
+}
+
 /// View state manages all visualization and display options
 #[derive(Debug, Clone)]
 pub struct ViewState {
@@ -66,6 +77,9 @@ pub struct ViewState {
 
     /// Statistics panel visibility
     pub show_stats_panel: bool,
+
+    /// Series panel visibility (left panel)
+    pub show_series_panel: bool,
 
     // Plot interaction
     /// Enable zoom functionality
@@ -128,6 +142,7 @@ impl Default for ViewState {
             show_legend: true,
             show_data_table: false,
             show_stats_panel: false,
+            show_series_panel: true,
 
             // Plot interaction
             allow_zoom: true,
@@ -184,5 +199,16 @@ impl ViewState {
     /// Get the number of selected Y series
     pub fn y_series_count(&self) -> usize {
         self.y_indices.len()
+    }
+
+    /// Determine layout mode based on screen width
+    pub fn get_layout_mode(screen_width: f32) -> LayoutMode {
+        use crate::constants::layout::{COMPACT_BREAKPOINT, NORMAL_BREAKPOINT};
+
+        match screen_width {
+            w if w < COMPACT_BREAKPOINT => LayoutMode::Compact,
+            w if w < NORMAL_BREAKPOINT => LayoutMode::Normal,
+            _ => LayoutMode::Wide,
+        }
     }
 }

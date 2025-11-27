@@ -2,8 +2,8 @@
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use eframe::App;
-use eframe::egui::{self, CentralPanel, ComboBox, SidePanel, TopBottomPanel};
-use egui_extras::{Column, TableBuilder};
+use eframe::egui::{self, CentralPanel, ComboBox};
+use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_plot::{Bar, BarChart, BoxElem, BoxPlot, BoxSpread, HLine, Line, Plot, Points};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
@@ -900,492 +900,495 @@ impl PlotOxide {
         Some((coeffs, r_squared))
     }
 
-}
+    /// Render the Y series selection panel (left sidebar)
+    fn render_series_panel(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        let shift_held = ctx.input(|i| i.modifiers.shift);
 
-impl App for PlotOxide {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Set theme
-        if self.state.view.dark_mode {
-            ctx.set_visuals(egui::Visuals::dark());
-        } else {
-            ctx.set_visuals(egui::Visuals::light());
-        }
+        ui.heading("Y Series");
+        ui.separator();
 
-        // Handle keyboard shortcuts
-        ctx.input(|i| {
-            if i.key_pressed(egui::Key::R) {
-                self.state.view.reset_bounds = true;
-            }
-            if i.key_pressed(egui::Key::G) {
-                self.state.view.show_grid = !self.state.view.show_grid;
-            }
-            if i.key_pressed(egui::Key::L) {
-                self.state.view.show_legend = !self.state.view.show_legend;
-            }
-            if i.key_pressed(egui::Key::T) {
-                self.state.view.dark_mode = !self.state.view.dark_mode;
-            }
-            if i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::F1) {
-                self.state.view.show_help = !self.state.view.show_help;
-            }
-            if i.key_pressed(egui::Key::Escape) {
-                self.state.view.show_help = false;
+        let old_y_indices = self.state.view.y_indices.clone();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for (i, header) in self.headers.iter().enumerate() {
+                let is_selected = self.state.view.y_indices.contains(&i);
+
+                // Check for sigma violations for ALL columns (independent of selection)
+                let violation_color = if !self.data.is_empty() {
+                    let y_values: Vec<f64> = self.data.iter().map(|row| row[i]).collect();
+                    let (mean, std_dev) = Self::calculate_statistics(&y_values);
+                    let mut has_3sigma = false;
+                    let mut has_2sigma = false;
+
+                    for &v in &y_values {
+                        let z = ((v - mean) / std_dev).abs();
+                        if z > 3.0 {
+                            has_3sigma = true;
+                            break;
+                        } else if z > 2.0 {
+                            has_2sigma = true;
+                        }
+                    }
+
+                    if has_3sigma {
+                        Some(egui::Color32::from_rgb(255, 50, 50))
+                    } else if has_2sigma {
+                        Some(egui::Color32::from_rgb(255, 165, 0))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let color = if is_selected {
+                    Self::get_series_color(self.state.view.y_indices.iter().position(|&x| x == i).unwrap_or(0))
+                } else {
+                    egui::Color32::GRAY
+                };
+
+                ui.horizontal(|ui| {
+                    let response = ui.selectable_label(is_selected, header);
+                    if is_selected {
+                        ui.painter().circle_filled(
+                            response.rect.left_center() - egui::vec2(10.0, 0.0),
+                            4.0,
+                            color,
+                        );
+                    }
+
+                    if let Some(warn_color) = violation_color {
+                        ui.colored_label(warn_color, "⚠");
+                    }
+
+                    if response.clicked() {
+                        if shift_held {
+                            // Range select
+                            if let Some(last) = self.state.view.last_selected_series {
+                                let start = last.min(i);
+                                let end = last.max(i);
+                                if ctrl_held {
+                                    // Add range to existing selection
+                                    for idx in start..=end {
+                                        if !self.state.view.y_indices.contains(&idx) {
+                                            self.state.view.y_indices.push(idx);
+                                        }
+                                    }
+                                } else {
+                                    // Replace with range
+                                    self.state.view.y_indices = (start..=end).collect();
+                                }
+                            } else {
+                                self.state.view.y_indices = vec![i];
+                            }
+                            self.state.view.last_selected_series = Some(i);
+                        } else if ctrl_held {
+                            // Toggle individual item
+                            if is_selected {
+                                self.state.view.y_indices.retain(|&x| x != i);
+                            } else {
+                                self.state.view.y_indices.push(i);
+                            }
+                            self.state.view.last_selected_series = Some(i);
+                        } else {
+                            // Single-select mode (replace)
+                            self.state.view.y_indices = vec![i];
+                            self.state.view.last_selected_series = Some(i);
+                        }
+                    }
+                });
             }
         });
 
-        // Y Series selection panel (left)
-        if !self.headers.is_empty() {
-            let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-            let shift_held = ctx.input(|i| i.modifiers.shift);
+        // Clear point selection if series changed
+        if self.state.view.y_indices != old_y_indices {
+            self.state.view.selected_point = None;
+            self.state.view.reset_bounds = true;
+        }
+    }
 
-            SidePanel::left("series_panel").default_width(200.0).show(ctx, |ui| {
-                ui.heading("Y Series");
-                ui.separator();
+    /// Render the statistics summary panel (bottom panel)
+    fn render_stats_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Statistics Summary");
+        ui.separator();
 
-                let old_y_indices = self.state.view.y_indices.clone();
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                // Calculate all series data
+                let all_series: Vec<Vec<[f64; 2]>> = self.state.view.y_indices.iter()
+                    .map(|&y_idx| {
+                        self.data.iter()
+                            .map(|row| [row[self.state.view.x_index], row[y_idx]])
+                            .collect()
+                    })
+                    .collect();
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (i, header) in self.headers.iter().enumerate() {
-                        let is_selected = self.state.view.y_indices.contains(&i);
+                for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
+                    let color = Self::get_series_color(series_idx);
+                    let name = &self.headers[y_idx];
+                    let y_values: Vec<f64> = all_series[series_idx].iter().map(|p| p[1]).collect();
 
-                        // Check for sigma violations for ALL columns (independent of selection)
-                        let violation_color = if !self.data.is_empty() {
-                            let y_values: Vec<f64> = self.data.iter().map(|row| row[i]).collect();
-                            let (mean, std_dev) = Self::calculate_statistics(&y_values);
-                            let mut has_3sigma = false;
-                            let mut has_2sigma = false;
+                    if !y_values.is_empty() {
+                        let (mean, std_dev) = Self::calculate_statistics(&y_values);
+                        let median = Self::calculate_median(&y_values);
+                        let min = y_values.iter().cloned().fold(f64::INFINITY, f64::min);
+                        let max = y_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
-                            for &v in &y_values {
-                                let z = ((v - mean) / std_dev).abs();
-                                if z > 3.0 {
-                                    has_3sigma = true;
-                                    break;
-                                } else if z > 2.0 {
-                                    has_2sigma = true;
-                                }
-                            }
-
-                            if has_3sigma {
-                                Some(egui::Color32::from_rgb(255, 50, 50))
-                            } else if has_2sigma {
-                                Some(egui::Color32::from_rgb(255, 165, 0))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-
-                        let color = if is_selected {
-                            Self::get_series_color(self.state.view.y_indices.iter().position(|&x| x == i).unwrap_or(0))
-                        } else {
-                            egui::Color32::GRAY
-                        };
-
-                        ui.horizontal(|ui| {
-                            let response = ui.selectable_label(is_selected, header);
-                            if is_selected {
-                                ui.painter().circle_filled(
-                                    response.rect.left_center() - egui::vec2(10.0, 0.0),
-                                    4.0,
-                                    color,
-                                );
-                            }
-
-                            if let Some(warn_color) = violation_color {
-                                ui.colored_label(warn_color, "⚠");
-                            }
-
-                            if response.clicked() {
-                                if shift_held {
-                                    // Range select
-                                    if let Some(last) = self.state.view.last_selected_series {
-                                        let start = last.min(i);
-                                        let end = last.max(i);
-                                        if ctrl_held {
-                                            // Add range to existing selection
-                                            for idx in start..=end {
-                                                if !self.state.view.y_indices.contains(&idx) {
-                                                    self.state.view.y_indices.push(idx);
-                                                }
-                                            }
-                                        } else {
-                                            // Replace with range
-                                            self.state.view.y_indices = (start..=end).collect();
-                                        }
-                                    } else {
-                                        self.state.view.y_indices = vec![i];
-                                    }
-                                    self.state.view.last_selected_series = Some(i);
-                                } else if ctrl_held {
-                                    // Toggle individual item
-                                    if is_selected {
-                                        self.state.view.y_indices.retain(|&x| x != i);
-                                    } else {
-                                        self.state.view.y_indices.push(i);
-                                    }
-                                    self.state.view.last_selected_series = Some(i);
-                                } else {
-                                    // Single-select mode (replace)
-                                    self.state.view.y_indices = vec![i];
-                                    self.state.view.last_selected_series = Some(i);
-                                }
+                        ui.group(|ui| {
+                            ui.set_min_width(280.0);
+                            ui.colored_label(color, format!("● {}", name));
+                            ui.label(format!("Count: {} | Range: {:.4}", y_values.len(), max - min));
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Min: {:.4}", min));
+                                ui.separator();
+                                ui.label(format!("Max: {:.4}", max));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Mean: {:.4}", mean));
+                                ui.separator();
+                                ui.label(format!("Med: {:.4}", median));
+                                ui.separator();
+                                ui.label(format!("σ: {:.4}", std_dev));
+                            });
+                            if self.state.spc.show_capability {
+                                let (cp, cpk) = Self::calculate_process_capability(&y_values, self.state.spc.spec_lower, self.state.spc.spec_upper);
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("Cp: {:.3}", cp));
+                                    ui.separator();
+                                    ui.label(format!("Cpk: {:.3}", cpk));
+                                });
                             }
                         });
                     }
-                });
+                }
+            });
+        });
+    }
 
-                // Clear point selection if series changed
-                if self.state.view.y_indices != old_y_indices {
-                    self.state.view.selected_point = None;
+    /// Render the data table panel (right sidebar)
+    fn render_data_table_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Data Table");
+
+        ui.horizontal(|ui| {
+            ui.label("Filter:");
+            ui.text_edit_singleline(&mut self.state.ui.row_filter);
+            if ui.button("✖").clicked() {
+                self.state.ui.row_filter.clear();
+            }
+        });
+
+        ui.separator();
+
+        // Build list of displayed columns (X + Y series)
+        let mut display_cols = vec![self.state.view.x_index];
+        display_cols.extend(&self.state.view.y_indices);
+        display_cols.sort_unstable();
+        display_cols.dedup();
+
+        let mut table_scroll = egui::ScrollArea::vertical().id_salt("data_table_scroll");
+
+        if let Some(row_to_scroll) = self.state.ui.scroll_to_row.take() {
+            table_scroll = table_scroll.vertical_scroll_offset((row_to_scroll as f32) * 18.0);
+        }
+
+        table_scroll.show(ui, |ui| {
+        TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::initial(40.0).resizable(false)) // Row number
+            .columns(Column::initial(80.0).resizable(true), display_cols.len())
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("#");
+                });
+                for &col_idx in &display_cols {
+                    header.col(|ui| {
+                        let label = &self.headers[col_idx];
+                        let sort_indicator = if self.state.ui.sort_column == Some(col_idx) {
+                            if self.state.ui.sort_ascending { " ↑" } else { " ↓" }
+                        } else {
+                            ""
+                        };
+                        if ui.button(format!("{}{}", label, sort_indicator)).clicked() {
+                            if self.state.ui.sort_column == Some(col_idx) {
+                                self.state.ui.sort_ascending = !self.state.ui.sort_ascending;
+                            } else {
+                                self.state.ui.sort_column = Some(col_idx);
+                                self.state.ui.sort_ascending = true;
+                            }
+                        }
+                    });
+                }
+            })
+            .body(|mut body| {
+                // Calculate row indices (filtering and sorting)
+                let mut row_indices: Vec<usize> = (0..self.raw_data.len()).collect();
+
+                // Apply filter
+                if !self.state.ui.row_filter.is_empty() {
+                    let filter_lower = self.state.ui.row_filter.to_lowercase();
+                    row_indices.retain(|&idx| {
+                        self.raw_data[idx].iter().any(|cell| cell.to_lowercase().contains(&filter_lower))
+                    });
+                }
+
+                // Apply sort
+                if let Some(sort_col) = self.state.ui.sort_column {
+                    row_indices.sort_by(|&a, &b| {
+                        let val_a = &self.data[a][sort_col];
+                        let val_b = &self.data[b][sort_col];
+                        if self.state.ui.sort_ascending {
+                            val_a.partial_cmp(val_b).unwrap_or(std::cmp::Ordering::Equal)
+                        } else {
+                            val_b.partial_cmp(val_a).unwrap_or(std::cmp::Ordering::Equal)
+                        }
+                    });
+                }
+
+                for &row_idx in &row_indices {
+                    let row_data = &self.raw_data[row_idx];
+                    let is_hovered = self.state.view.hovered_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
+                    let is_selected = self.state.view.selected_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
+                    let is_excursion = self.state.spc.excursion_rows.contains(&row_idx);
+
+                    body.row(18.0, |mut row_ui| {
+                        if is_selected || is_hovered {
+                            row_ui.set_selected(true);
+                        }
+
+                        row_ui.col(|ui| {
+                            if is_excursion {
+                                ui.colored_label(egui::Color32::RED, format!("⚠ {}", row_idx + 1));
+                            } else {
+                                ui.label(format!("{}", row_idx + 1));
+                            }
+                        });
+
+                        for &col_idx in &display_cols {
+                            let cell = &row_data[col_idx];
+                            row_ui.col(|ui| {
+                                // Highlight X column or Y series
+                                if col_idx == self.state.view.x_index {
+                                    ui.strong(cell);
+                                } else if self.state.view.y_indices.contains(&col_idx) {
+                                    ui.strong(cell);
+                                } else {
+                                    ui.label(cell);
+                                }
+                            });
+                        }
+
+                        // Detect if this row is hovered (after all columns)
+                        if row_ui.response().hovered() {
+                            self.state.view.table_hovered_row = Some(row_idx);
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    /// Render the help dialog window
+    fn render_help_dialog(&mut self, ctx: &egui::Context) {
+        if self.state.view.show_help {
+            egui::Window::new("⌨ Keyboard Shortcuts")
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.heading("Navigation");
+                    ui.label("R - Reset view");
+                    ui.label("G - Toggle grid");
+                    ui.label("L - Toggle legend");
+                    ui.label("T - Toggle dark/light theme");
+                    ui.label("H / F1 - Toggle help");
+                    ui.label("ESC - Close help");
+
+                    ui.separator();
+                    ui.heading("Mouse Controls");
+                    ui.label("Scroll - Zoom in/out");
+                    ui.label("Shift + Scroll - Zoom X-axis only");
+                    ui.label("Ctrl + Scroll - Zoom Y-axis only");
+                    ui.label("Drag - Pan view");
+                    ui.label("Alt + Drag - Box zoom");
+                    ui.label("Click point - Select point");
+                    ui.label("Right-click - Context menu");
+
+                    ui.separator();
+                    ui.heading("Series Selection");
+                    ui.label("Click - Select single");
+                    ui.label("Ctrl/Cmd + Click - Toggle item");
+                    ui.label("Shift + Click - Select range");
+                    ui.label("Ctrl + Shift + Click - Add range");
+
+                    ui.separator();
+                    if ui.button("Close").clicked() {
+                        self.state.view.show_help = false;
+                    }
+                });
+        }
+    }
+
+    /// Render the toolbar and control panels
+    /// Returns false if no Y series selected (skip plot rendering), true otherwise
+    fn render_toolbar_and_controls(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) -> bool {
+        // File selection button
+        ui.horizontal(|ui| {
+            if ui.button("Open CSV File").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("CSV Files", &["csv"])
+                    .pick_file()
+                {
+                    if let Err(e) = self.load_csv(path) {
+                        self.state.ui.set_error(e.user_message());
+                    }
+                }
+            }
+
+            // Recent files menu
+            if !self.state.recent_files.is_empty() {
+                egui::ComboBox::from_label("Recent")
+                    .selected_text("▼")
+                    .show_ui(ui, |ui| {
+                        // Need to clone to avoid borrow checker issues with load_csv
+                        for path in self.state.recent_files.clone().iter() {
+                            if let Some(name) = path.file_name() {
+                                if ui.button(name.to_string_lossy()).clicked() {
+                                    let path_clone = path.clone();
+                                    if let Err(e) = self.load_csv(path_clone) {
+                                        self.state.ui.set_error(e.user_message());
+                                    }
+                                }
+                            }
+                        }
+                    });
+            }
+
+            // Display current file using Option combinator
+            self.state.current_file
+                .as_ref()
+                .map(|file| ui.label(format!("File: {}", file.display())));
+        });
+
+        ui.separator();
+
+        // Handle drag and drop using Option combinators
+        ctx.input(|i| {
+            i.raw.dropped_files
+                .first()
+                .and_then(|f| f.path.as_ref())
+                .map(|path| {
+                    if let Err(e) = self.load_csv(path.clone()) {
+                        self.state.ui.set_error(e.user_message());
+                    }
+                });
+        });
+
+        // Show plot only if we have data
+        if !self.headers.is_empty() && !self.data.is_empty() {
+            // Axis selection and controls
+            ui.horizontal(|ui| {
+                let old_x = self.state.view.x_index;
+                let old_use_row = self.state.view.use_row_index;
+
+                ui.checkbox(&mut self.state.view.use_row_index, "Row Index");
+
+                if !self.state.view.use_row_index {
+                    ComboBox::from_label("X Axis")
+                        .selected_text(&self.headers[self.state.view.x_index])
+                        .show_ui(ui, |ui| {
+                            for (i, h) in self.headers.iter().enumerate() {
+                                ui.selectable_value(&mut self.state.view.x_index, i, h);
+                            }
+                        });
+                } else {
+                    ui.label("X Axis: Row #");
+                }
+
+                // Update timestamp flag if X axis changed
+                if old_x != self.state.view.x_index || old_use_row != self.state.view.use_row_index {
+                    if !self.state.view.use_row_index {
+                        self.state.view.x_is_timestamp = self.is_column_timestamp(self.state.view.x_index);
+                    } else {
+                        self.state.view.x_is_timestamp = false;
+                    }
                     self.state.view.reset_bounds = true;
                 }
-            });
-        }
-
-        // Statistics bottom panel
-        if self.state.view.show_stats_panel && !self.headers.is_empty() && !self.state.view.y_indices.is_empty() {
-            TopBottomPanel::bottom("stats_panel").default_height(120.0).show(ctx, |ui| {
-                ui.heading("Statistics Summary");
-                ui.separator();
-
-                egui::ScrollArea::horizontal().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        // Calculate all series data
-                        let all_series: Vec<Vec<[f64; 2]>> = self.state.view.y_indices.iter()
-                            .map(|&y_idx| {
-                                self.data.iter()
-                                    .map(|row| [row[self.state.view.x_index], row[y_idx]])
-                                    .collect()
-                            })
-                            .collect();
-
-                        for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
-                            let color = Self::get_series_color(series_idx);
-                            let name = &self.headers[y_idx];
-                            let y_values: Vec<f64> = all_series[series_idx].iter().map(|p| p[1]).collect();
-
-                            if !y_values.is_empty() {
-                                let (mean, std_dev) = Self::calculate_statistics(&y_values);
-                                let median = Self::calculate_median(&y_values);
-                                let min = y_values.iter().cloned().fold(f64::INFINITY, f64::min);
-                                let max = y_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-
-                                ui.group(|ui| {
-                                    ui.set_min_width(280.0);
-                                    ui.colored_label(color, format!("� {}", name));
-                                    ui.label(format!("Count: {} | Range: {:.4}", y_values.len(), max - min));
-                                    ui.horizontal(|ui| {
-                                        ui.label(format!("Min: {:.4}", min));
-                                        ui.separator();
-                                        ui.label(format!("Max: {:.4}", max));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.label(format!("Mean: {:.4}", mean));
-                                        ui.separator();
-                                        ui.label(format!("Med: {:.4}", median));
-                                        ui.separator();
-                                        ui.label(format!("σ: {:.4}", std_dev));
-                                    });
-                                    if self.state.spc.show_capability {
-                                        let (cp, cpk) = Self::calculate_process_capability(&y_values, self.state.spc.spec_lower, self.state.spc.spec_upper);
-                                        ui.horizontal(|ui| {
-                                            ui.label(format!("Cp: {:.3}", cp));
-                                            ui.separator();
-                                            ui.label(format!("Cpk: {:.3}", cpk));
-                                        });
-                                    }
-                                });
-                            }
-                        }
-                    });
-                });
-            });
-        }
-
-        // Data table side panel
-        if self.state.view.show_data_table && !self.raw_data.is_empty() {
-            SidePanel::right("data_panel").default_width(400.0).show(ctx, |ui| {
-                ui.heading("Data Table");
-
-                ui.horizontal(|ui| {
-                    ui.label("Filter:");
-                    ui.text_edit_singleline(&mut self.state.ui.row_filter);
-                    if ui.button("✖").clicked() {
-                        self.state.ui.row_filter.clear();
-                    }
-                });
 
                 ui.separator();
 
-                // Build list of displayed columns (X + Y series)
-                let mut display_cols = vec![self.state.view.x_index];
-                display_cols.extend(&self.state.view.y_indices);
-                display_cols.sort_unstable();
-                display_cols.dedup();
-
-                let mut table_scroll = egui::ScrollArea::vertical().id_salt("data_table_scroll");
-
-                if let Some(row_to_scroll) = self.state.ui.scroll_to_row.take() {
-                    table_scroll = table_scroll.vertical_scroll_offset((row_to_scroll as f32) * 18.0);
+                if ui.button("Reset View").clicked() {
+                    self.reset_view();
                 }
-
-                table_scroll.show(ui, |ui| {
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::initial(40.0).resizable(false)) // Row number
-                    .columns(Column::initial(80.0).resizable(true), display_cols.len())
-                    .header(20.0, |mut header| {
-                        header.col(|ui| {
-                            ui.strong("#");
-                        });
-                        for &col_idx in &display_cols {
-                            header.col(|ui| {
-                                let label = &self.headers[col_idx];
-                                let sort_indicator = if self.state.ui.sort_column == Some(col_idx) {
-                                    if self.state.ui.sort_ascending { " ↑" } else { " ↓" }
-                                } else {
-                                    ""
-                                };
-                                if ui.button(format!("{}{}", label, sort_indicator)).clicked() {
-                                    if self.state.ui.sort_column == Some(col_idx) {
-                                        self.state.ui.sort_ascending = !self.state.ui.sort_ascending;
-                                    } else {
-                                        self.state.ui.sort_column = Some(col_idx);
-                                        self.state.ui.sort_ascending = true;
-                                    }
-                                }
-                            });
-                        }
-                    })
-                    .body(|mut body| {
-                        // Calculate row indices (filtering and sorting)
-                        let mut row_indices: Vec<usize> = (0..self.raw_data.len()).collect();
-
-                        // Apply filter
-                        if !self.state.ui.row_filter.is_empty() {
-                            let filter_lower = self.state.ui.row_filter.to_lowercase();
-                            row_indices.retain(|&idx| {
-                                self.raw_data[idx].iter().any(|cell| cell.to_lowercase().contains(&filter_lower))
-                            });
-                        }
-
-                        // Apply sort
-                        if let Some(sort_col) = self.state.ui.sort_column {
-                            row_indices.sort_by(|&a, &b| {
-                                let val_a = &self.data[a][sort_col];
-                                let val_b = &self.data[b][sort_col];
-                                if self.state.ui.sort_ascending {
-                                    val_a.partial_cmp(val_b).unwrap_or(std::cmp::Ordering::Equal)
-                                } else {
-                                    val_b.partial_cmp(val_a).unwrap_or(std::cmp::Ordering::Equal)
-                                }
-                            });
-                        }
-
-                        for &row_idx in &row_indices {
-                            let row_data = &self.raw_data[row_idx];
-                            let is_hovered = self.state.view.hovered_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
-                            let is_selected = self.state.view.selected_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
-                            let is_excursion = self.state.spc.excursion_rows.contains(&row_idx);
-
-                            body.row(18.0, |mut row_ui| {
-                                if is_selected || is_hovered {
-                                    row_ui.set_selected(true);
-                                }
-
-                                row_ui.col(|ui| {
-                                    if is_excursion {
-                                        ui.colored_label(egui::Color32::RED, format!("⚠ {}", row_idx + 1));
-                                    } else {
-                                        ui.label(format!("{}", row_idx + 1));
-                                    }
-                                });
-
-                                for &col_idx in &display_cols {
-                                    let cell = &row_data[col_idx];
-                                    row_ui.col(|ui| {
-                                        // Highlight X column or Y series
-                                        if col_idx == self.state.view.x_index {
-                                            ui.strong(cell);
-                                        } else if self.state.view.y_indices.contains(&col_idx) {
-                                            ui.strong(cell);
-                                        } else {
-                                            ui.label(cell);
-                                        }
-                                    });
-                                }
-
-                                // Detect if this row is hovered (after all columns)
-                                if row_ui.response().hovered() {
-                                    self.state.view.table_hovered_row = Some(row_idx);
-                                }
-                            });
-                        }
-                    });
-                });
             });
-        }
 
-        CentralPanel::default().show(ctx, |ui| {
-            // File selection button
+            // Plot options
             ui.horizontal(|ui| {
-                if ui.button("Open CSV File").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("CSV Files", &["csv"])
-                        .pick_file()
-                    {
-                        if let Err(e) = self.load_csv(path) {
-                            self.state.ui.set_error(e.user_message());
-                        }
-                    }
+                ui.label("Display:");
+                ui.checkbox(&mut self.state.view.show_grid, "Grid (G)");
+                ui.checkbox(&mut self.state.view.show_legend, "Legend (L)");
+                ui.checkbox(&mut self.state.view.allow_zoom, "Zoom");
+                ui.checkbox(&mut self.state.view.allow_drag, "Pan");
+                ui.checkbox(&mut self.state.view.show_data_table, "Data Table");
+                ui.checkbox(&mut self.state.view.show_stats_panel, "Statistics");
+
+                ui.separator();
+                ui.label("Export:");
+                if ui.button("CSV").clicked() {
+                    self.export_csv();
+                }
+                ui.separator();
+                ui.label("Config:");
+                if ui.button("Save").clicked() {
+                    self.save_config();
+                }
+                if ui.button("Load").clicked() {
+                    self.load_config();
                 }
 
-                // Recent files menu
-                if !self.state.recent_files.is_empty() {
-                    egui::ComboBox::from_label("Recent")
-                        .selected_text("▼")
-                        .show_ui(ui, |ui| {
-                            // Need to clone to avoid borrow checker issues with load_csv
-                            for path in self.state.recent_files.clone().iter() {
-                                if let Some(name) = path.file_name() {
-                                    if ui.button(name.to_string_lossy()).clicked() {
-                                        let path_clone = path.clone();
-                                        if let Err(e) = self.load_csv(path_clone) {
-                                            self.state.ui.set_error(e.user_message());
-                                        }
-                                    }
-                                }
-                            }
-                        });
+                ui.separator();
+                if ui.button(if self.state.view.dark_mode { "🌙 Dark" } else { "☀ Light" }).clicked() {
+                    self.state.view.dark_mode = !self.state.view.dark_mode;
                 }
 
-                // Display current file using Option combinator
-                self.state.current_file
-                    .as_ref()
-                    .map(|file| ui.label(format!("File: {}", file.display())));
-            });
+                ui.separator();
 
-            ui.separator();
+                ui.label("Plot Mode:");
+                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Scatter, "Scatter/Line");
+                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Histogram, "Histogram");
+                if self.state.view.plot_mode == PlotMode::Histogram {
+                    ui.label("Bins:");
+                    ui.add(egui::Slider::new(&mut self.state.view.histogram_bins, 5..=50));
+                }
+                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::BoxPlot, "Box Plot");
+                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Pareto, "Pareto");
+                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::XbarR, "X-bar & R");
+                if self.state.view.plot_mode == PlotMode::XbarR {
+                    ui.label("Subgroup:");
+                    ui.add(egui::Slider::new(&mut self.state.spc.xbarr_subgroup_size, 2..=10));
+                }
+                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::PChart, "p-chart");
+                if self.state.view.plot_mode == PlotMode::PChart {
+                    ui.label("Sample n:");
+                    ui.add(egui::Slider::new(&mut self.state.spc.pchart_sample_size, 10..=200));
+                }
 
-            // Handle drag and drop using Option combinators
-            ctx.input(|i| {
-                i.raw.dropped_files
-                    .first()
-                    .and_then(|f| f.path.as_ref())
-                    .map(|path| {
-                        if let Err(e) = self.load_csv(path.clone()) {
-                            self.state.ui.set_error(e.user_message());
-                        }
-                    });
-            });
-
-            // Show plot only if we have data
-            if !self.headers.is_empty() && !self.data.is_empty() {
-                // Axis selection and controls
-                ui.horizontal(|ui| {
-                    let old_x = self.state.view.x_index;
-                    let old_use_row = self.state.view.use_row_index;
-
-                    ui.checkbox(&mut self.state.view.use_row_index, "Row Index");
-
-                    if !self.state.view.use_row_index {
-                        ComboBox::from_label("X Axis")
-                            .selected_text(&self.headers[self.state.view.x_index])
-                            .show_ui(ui, |ui| {
-                                for (i, h) in self.headers.iter().enumerate() {
-                                    ui.selectable_value(&mut self.state.view.x_index, i, h);
-                                }
-                            });
-                    } else {
-                        ui.label("X Axis: Row #");
-                    }
-
-                    // Update timestamp flag if X axis changed
-                    if old_x != self.state.view.x_index || old_use_row != self.state.view.use_row_index {
-                        if !self.state.view.use_row_index {
-                            self.state.view.x_is_timestamp = self.is_column_timestamp(self.state.view.x_index);
-                        } else {
-                            self.state.view.x_is_timestamp = false;
-                        }
-                        self.state.view.reset_bounds = true;
-                    }
-
-                    ui.separator();
-
-                    if ui.button("Reset View").clicked() {
-                        self.reset_view();
-                    }
-                });
-
-                // Plot options
-                ui.horizontal(|ui| {
-                    ui.label("Display:");
-                    ui.checkbox(&mut self.state.view.show_grid, "Grid (G)");
-                    ui.checkbox(&mut self.state.view.show_legend, "Legend (L)");
-                    ui.checkbox(&mut self.state.view.allow_zoom, "Zoom");
-                    ui.checkbox(&mut self.state.view.allow_drag, "Pan");
-                    ui.checkbox(&mut self.state.view.show_data_table, "Data Table");
-                    ui.checkbox(&mut self.state.view.show_stats_panel, "Statistics");
-
-                    ui.separator();
-                    ui.label("Export:");
-                    if ui.button("CSV").clicked() {
-                        self.export_csv();
-                    }
-                    ui.separator();
-                    ui.label("Config:");
-                    if ui.button("Save").clicked() {
-                        self.save_config();
-                    }
-                    if ui.button("Load").clicked() {
-                        self.load_config();
-                    }
-
-                    ui.separator();
-                    if ui.button(if self.state.view.dark_mode { "� Dark" } else { "☀ Light" }).clicked() {
-                        self.state.view.dark_mode = !self.state.view.dark_mode;
-                    }
-
-                    ui.separator();
-
-                    ui.label("Plot Mode:");
-                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Scatter, "Scatter/Line");
-                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Histogram, "Histogram");
-                    if self.state.view.plot_mode == PlotMode::Histogram {
-                        ui.label("Bins:");
-                        ui.add(egui::Slider::new(&mut self.state.view.histogram_bins, 5..=50));
-                    }
-                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::BoxPlot, "Box Plot");
-                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Pareto, "Pareto");
-                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::XbarR, "X-bar & R");
-                    if self.state.view.plot_mode == PlotMode::XbarR {
-                        ui.label("Subgroup:");
-                        ui.add(egui::Slider::new(&mut self.state.spc.xbarr_subgroup_size, 2..=10));
-                    }
-                    ui.radio_value(&mut self.state.view.plot_mode, PlotMode::PChart, "p-chart");
-                    if self.state.view.plot_mode == PlotMode::PChart {
-                        ui.label("Sample n:");
-                        ui.add(egui::Slider::new(&mut self.state.spc.pchart_sample_size, 10..=200));
-                    }
-
-                    if self.state.view.plot_mode == PlotMode::Scatter {
-                        ui.separator();
-                        ui.label("Style:");
-                        ui.radio_value(&mut self.state.view.line_style, LineStyle::Line, "Line");
-                        ui.radio_value(&mut self.state.view.line_style, LineStyle::Points, "Points");
-                        ui.radio_value(&mut self.state.view.line_style, LineStyle::LineAndPoints, "Both");
-                    }
-
-                    ui.separator();
-                    if ui.button("? Help").clicked() {
-                        self.state.view.show_help = !self.state.view.show_help;
-                    }
-                });
-
-                // Only show SPC/Analysis controls in Scatter mode
                 if self.state.view.plot_mode == PlotMode::Scatter {
+                    ui.separator();
+                    ui.label("Style:");
+                    ui.radio_value(&mut self.state.view.line_style, LineStyle::Line, "Line");
+                    ui.radio_value(&mut self.state.view.line_style, LineStyle::Points, "Points");
+                    ui.radio_value(&mut self.state.view.line_style, LineStyle::LineAndPoints, "Both");
+                }
+
+                ui.separator();
+                if ui.button("? Help").clicked() {
+                    self.state.view.show_help = !self.state.view.show_help;
+                }
+            });
+
+            // Only show SPC/Analysis controls in Scatter mode
+            if self.state.view.plot_mode == PlotMode::Scatter {
                 // SPC Controls
                 ui.horizontal(|ui| {
                     ui.label("SPC:");
@@ -1491,782 +1494,898 @@ impl App for PlotOxide {
                         ui.add(egui::Slider::new(&mut self.state.filters.filter_outlier_sigma, 2.0..=6.0).step_by(0.5));
                     }
                 });
-                }
+            }
 
-                ui.separator();
+            ui.separator();
 
-                // Skip if no Y series selected
-                if self.state.view.y_indices.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.label("Select at least one Y series to plot");
-                    });
-                    return;
-                }
+            // Check if no Y series selected
+            if self.state.view.y_indices.is_empty() {
+                ui.vertical_centered(|ui| {
+                    ui.label("Select at least one Y series to plot");
+                });
+                return false;
+            }
 
-                // Pre-calculate statistics for outlier filtering (performance optimization)
-                if self.state.filters.filter_outliers {
-                    self.state.outlier_stats_cache.clear();
-                    for &y_idx in &self.state.view.y_indices {
-                        let y_values: Vec<f64> = self.data.iter().map(|row| row[y_idx]).collect();
-                        let stats = Self::calculate_statistics(&y_values);
-                        self.state.outlier_stats_cache.insert(y_idx, stats);
-                    }
-                }
+            true
+        } else {
+            false
+        }
+    }
 
-                // Create data for all series with filtering
-                let all_series: Vec<Vec<[f64; 2]>> = self.state.view.y_indices.iter()
-                    .map(|&y_idx| {
-                        let points: Vec<[f64; 2]> = self.data.iter()
-                            .enumerate()
-                            .filter_map(|(row_idx, row)| {
-                                let x_val = if self.state.view.use_row_index {
-                                    row_idx as f64
-                                } else {
-                                    row[self.state.view.x_index]
-                                };
-                                let y_val = row[y_idx];
+    /// Render the main plot area
+    fn render_plot(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        // Pre-calculate statistics for outlier filtering (performance optimization)
+        if self.state.filters.filter_outliers {
+            self.state.outlier_stats_cache.clear();
+            for &y_idx in &self.state.view.y_indices {
+                let y_values: Vec<f64> = self.data.iter().map(|row| row[y_idx]).collect();
+                let stats = Self::calculate_statistics(&y_values);
+                self.state.outlier_stats_cache.insert(y_idx, stats);
+            }
+        }
 
-                                // Apply filters
-                                if self.passes_filters(row_idx, x_val, y_val, y_idx) {
-                                    Some([x_val, y_val])
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-
-                        // Downsample if dataset is large
-                        if points.len() > self.state.view.downsample_threshold {
-                            Self::downsample_lttb(&points, self.state.view.downsample_threshold)
+        // Create data for all series with filtering
+        let all_series: Vec<Vec<[f64; 2]>> = self.state.view.y_indices.iter()
+            .map(|&y_idx| {
+                let points: Vec<[f64; 2]> = self.data.iter()
+                    .enumerate()
+                    .filter_map(|(row_idx, row)| {
+                        let x_val = if self.state.view.use_row_index {
+                            row_idx as f64
                         } else {
-                            points
+                            row[self.state.view.x_index]
+                        };
+                        let y_val = row[y_idx];
+
+                        // Apply filters
+                        if self.passes_filters(row_idx, x_val, y_val, y_idx) {
+                            Some([x_val, y_val])
+                        } else {
+                            None
                         }
                     })
                     .collect();
 
-                // Detect modifier keys for constrained zoom
-                let shift_held = ctx.input(|i| i.modifiers.shift);
-                let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-                let alt_held = ctx.input(|i| i.modifiers.alt);
+                // Downsample if dataset is large
+                if points.len() > self.state.view.downsample_threshold {
+                    Self::downsample_lttb(&points, self.state.view.downsample_threshold)
+                } else {
+                    points
+                }
+            })
+            .collect();
 
-                let mut plot = Plot::new("plot")
-                    .allow_zoom(self.state.view.allow_zoom)
-                    .allow_drag(self.state.view.allow_drag && !alt_held)
-                    .allow_boxed_zoom(self.state.view.allow_zoom && alt_held)
-                    .allow_scroll(self.state.view.allow_zoom)
-                    .show_grid(self.state.view.show_grid)
-                    .height(ui.available_height() - 10.0);
+        // Detect modifier keys for constrained zoom
+        let shift_held = ctx.input(|i| i.modifiers.shift);
+        let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        let alt_held = ctx.input(|i| i.modifiers.alt);
 
-                // Apply axis-locked zoom if modifiers held
-                if shift_held && self.state.view.allow_zoom {
-                    plot = plot.allow_zoom([true, false]).allow_boxed_zoom(false); // X-only
-                } else if ctrl_held && self.state.view.allow_zoom {
-                    plot = plot.allow_zoom([false, true]).allow_boxed_zoom(false); // Y-only
+        let mut plot = Plot::new("plot")
+            .allow_zoom(self.state.view.allow_zoom)
+            .allow_drag(self.state.view.allow_drag && !alt_held)
+            .allow_boxed_zoom(self.state.view.allow_zoom && alt_held)
+            .allow_scroll(self.state.view.allow_zoom)
+            .show_grid(self.state.view.show_grid)
+            .height(ui.available_height());
+
+        // Apply axis-locked zoom if modifiers held
+        if shift_held && self.state.view.allow_zoom {
+            plot = plot.allow_zoom([true, false]).allow_boxed_zoom(false); // X-only
+        } else if ctrl_held && self.state.view.allow_zoom {
+            plot = plot.allow_zoom([false, true]).allow_boxed_zoom(false); // Y-only
+        }
+
+        if self.state.view.reset_bounds {
+            plot = plot.reset();
+            self.state.view.reset_bounds = false;
+        }
+
+        if self.state.view.show_legend {
+            plot = plot.legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop));
+        }
+
+        // Add custom axis formatters for timestamps
+        if self.state.view.x_is_timestamp {
+            plot = plot.x_axis_formatter(|mark, _range| {
+                let dt = DateTime::<Utc>::from_timestamp(mark.value as i64, 0);
+                if let Some(dt) = dt {
+                    dt.format("%Y-%m-%d\n%H:%M").to_string()
+                } else {
+                    format!("{:.0}", mark.value)
+                }
+            });
+        }
+
+        let plot_response = plot.show(ui, |plot_ui| {
+            match self.state.view.plot_mode {
+                PlotMode::Scatter => {
+                    // Plot each series in scatter mode
+                    for (series_idx, (&y_idx, points_data)) in self.state.view.y_indices.iter().zip(&all_series).enumerate() {
+                        let color = Self::get_series_color(series_idx);
+                        let name = &self.headers[y_idx];
+
+                // Draw sigma zone lines if enabled
+                if self.state.spc.show_sigma_zones && !points_data.is_empty() {
+                    let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
+                    let (mean, std_dev) = Self::calculate_statistics(&y_values);
+
+                    // ±1σ lines (blue)
+                    plot_ui.hline(HLine::new(format!("{} +1σ", name), mean + 1.0 * std_dev)
+                        .color(egui::Color32::from_rgb(150, 150, 255))
+                        .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
+                        .width(1.0));
+                    plot_ui.hline(HLine::new(format!("{} -1σ", name), mean - 1.0 * std_dev)
+                        .color(egui::Color32::from_rgb(150, 150, 255))
+                        .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
+                        .width(1.0));
+
+                    // ±2σ lines (orange)
+                    plot_ui.hline(HLine::new(format!("{} +2σ", name), mean + 2.0 * std_dev)
+                        .color(egui::Color32::from_rgb(255, 200, 100))
+                        .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
+                        .width(1.0));
+                    plot_ui.hline(HLine::new(format!("{} -2σ", name), mean - 2.0 * std_dev)
+                        .color(egui::Color32::from_rgb(255, 200, 100))
+                        .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
+                        .width(1.0));
+
+                    // ±3σ lines (red)
+                    plot_ui.hline(HLine::new(format!("{} +3σ", name), mean + 3.0 * std_dev)
+                        .color(egui::Color32::from_rgb(255, 150, 150))
+                        .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
+                        .width(1.0));
+                    plot_ui.hline(HLine::new(format!("{} -3σ", name), mean - 3.0 * std_dev)
+                        .color(egui::Color32::from_rgb(255, 150, 150))
+                        .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
+                        .width(1.0));
                 }
 
-                if self.state.view.reset_bounds {
-                    plot = plot.reset();
-                    self.state.view.reset_bounds = false;
+                // Draw specification limits if capability enabled
+                if self.state.spc.show_capability {
+                    plot_ui.hline(
+                        HLine::new("LSL", self.state.spc.spec_lower)
+                            .color(egui::Color32::from_rgb(255, 140, 0))
+                            .style(egui_plot::LineStyle::Solid)
+                            .width(2.0),
+                    );
+                    plot_ui.hline(
+                        HLine::new("USL", self.state.spc.spec_upper)
+                            .color(egui::Color32::from_rgb(255, 140, 0))
+                            .style(egui_plot::LineStyle::Solid)
+                            .width(2.0),
+                    );
                 }
 
-                if self.state.view.show_legend {
-                    plot = plot.legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop));
+                // Draw SPC control limits if enabled
+                if self.state.spc.show_spc_limits {
+                    let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
+                    let (mean, std_dev) = Self::calculate_statistics(&y_values);
+                    let ucl = mean + self.state.spc.sigma_multiplier * std_dev;
+                    let lcl = mean - self.state.spc.sigma_multiplier * std_dev;
+
+                    // Center line (mean)
+                    plot_ui.hline(
+                        HLine::new(format!("{} Mean", name), mean)
+                            .color(color)
+                            .style(egui_plot::LineStyle::Dashed { length: 8.0 })
+                            .width(1.5),
+                    );
+
+                    // Upper control limit
+                    plot_ui.hline(
+                        HLine::new(format!("{} UCL", name), ucl)
+                            .color(egui::Color32::RED)
+                            .style(egui_plot::LineStyle::Dashed { length: 10.0 })
+                            .width(2.0),
+                    );
+
+                    // Lower control limit
+                    plot_ui.hline(
+                        HLine::new(format!("{} LCL", name), lcl)
+                            .color(egui::Color32::RED)
+                            .style(egui_plot::LineStyle::Dashed { length: 10.0 })
+                            .width(2.0),
+                    );
                 }
 
-                // Add custom axis formatters for timestamps
-                if self.state.view.x_is_timestamp {
-                    plot = plot.x_axis_formatter(|mark, _range| {
-                        let dt = DateTime::<Utc>::from_timestamp(mark.value as i64, 0);
-                        if let Some(dt) = dt {
-                            dt.format("%Y-%m-%d\n%H:%M").to_string()
-                        } else {
-                            format!("{:.0}", mark.value)
-                        }
-                    });
+                // Draw data series
+                match self.state.view.line_style {
+                    LineStyle::Line => {
+                        plot_ui.line(Line::new(name, points_data.clone()).color(color));
+                    }
+                    LineStyle::Points => {
+                        plot_ui.points(Points::new(name, points_data.clone()).radius(3.0).color(color));
+                    }
+                    LineStyle::LineAndPoints => {
+                        plot_ui.line(Line::new(name, points_data.clone()).color(color));
+                        plot_ui.points(Points::new(name, points_data.clone()).radius(3.0).color(color));
+                    }
                 }
 
-                let plot_response = plot.show(ui, |plot_ui| {
-                    match self.state.view.plot_mode {
-                        PlotMode::Scatter => {
-                            // Plot each series in scatter mode
-                            for (series_idx, (&y_idx, points_data)) in self.state.view.y_indices.iter().zip(&all_series).enumerate() {
-                                let color = Self::get_series_color(series_idx);
-                                let name = &self.headers[y_idx];
+                // Highlight outliers
+                if self.state.spc.show_outliers {
+                    let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
+                    let outlier_indices = Self::detect_outliers(&y_values, self.state.spc.outlier_threshold);
+                    let outlier_points: Vec<[f64; 2]> = outlier_indices.iter()
+                        .map(|&i| points_data[i])
+                        .collect();
 
-                        // Draw sigma zone lines if enabled
-                        if self.state.spc.show_sigma_zones && !points_data.is_empty() {
-                            let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let (mean, std_dev) = Self::calculate_statistics(&y_values);
+                    if !outlier_points.is_empty() {
+                        plot_ui.points(
+                            Points::new(format!("{} Outliers", name), outlier_points)
+                                .color(egui::Color32::RED)
+                                .filled(true)
+                                .radius(5.0)
+                                .shape(egui_plot::MarkerShape::Diamond),
+                        );
+                    }
+                }
 
-                            // ±1σ lines (blue)
-                            plot_ui.hline(HLine::new(format!("{} +1σ", name), mean + 1.0 * std_dev)
-                                .color(egui::Color32::from_rgb(150, 150, 255))
-                                .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
-                                .width(1.0));
-                            plot_ui.hline(HLine::new(format!("{} -1σ", name), mean - 1.0 * std_dev)
-                                .color(egui::Color32::from_rgb(150, 150, 255))
-                                .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
-                                .width(1.0));
+                // Highlight Western Electric violations
+                if self.state.spc.show_we_rules {
+                    let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
+                    let we_indices = Self::detect_western_electric_violations(&y_values);
+                    let we_points: Vec<[f64; 2]> = we_indices.iter()
+                        .map(|&i| points_data[i])
+                        .collect();
 
-                            // ±2σ lines (orange)
-                            plot_ui.hline(HLine::new(format!("{} +2σ", name), mean + 2.0 * std_dev)
-                                .color(egui::Color32::from_rgb(255, 200, 100))
-                                .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
-                                .width(1.0));
-                            plot_ui.hline(HLine::new(format!("{} -2σ", name), mean - 2.0 * std_dev)
-                                .color(egui::Color32::from_rgb(255, 200, 100))
-                                .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
-                                .width(1.0));
+                    if !we_points.is_empty() {
+                        plot_ui.points(
+                            Points::new(format!("{} WE Violations", name), we_points)
+                                .color(egui::Color32::from_rgb(255, 165, 0))
+                                .filled(false)
+                                .radius(7.0)
+                                .shape(egui_plot::MarkerShape::Square),
+                        );
+                    }
+                }
 
-                            // ±3σ lines (red)
-                            plot_ui.hline(HLine::new(format!("{} +3σ", name), mean + 3.0 * std_dev)
-                                .color(egui::Color32::from_rgb(255, 150, 150))
-                                .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
-                                .width(1.0));
-                            plot_ui.hline(HLine::new(format!("{} -3σ", name), mean - 3.0 * std_dev)
-                                .color(egui::Color32::from_rgb(255, 150, 150))
-                                .style(egui_plot::LineStyle::Dotted { spacing: 8.0 })
-                                .width(1.0));
-                        }
+                // Highlight selected point
+                if let Some((sel_series, sel_point)) = self.state.view.selected_point {
+                    if series_idx == sel_series && sel_point < points_data.len() {
+                        plot_ui.points(
+                            Points::new("", vec![points_data[sel_point]])
+                                .color(egui::Color32::from_rgb(255, 215, 0))
+                                .filled(false)
+                                .radius(10.0)
+                                .shape(egui_plot::MarkerShape::Circle),
+                        );
+                    }
+                }
 
-                        // Draw specification limits if capability enabled
-                        if self.state.spc.show_capability {
-                            plot_ui.hline(
-                                HLine::new("LSL", self.state.spc.spec_lower)
-                                    .color(egui::Color32::from_rgb(255, 140, 0))
+                // Highlight table-hovered point (use white for visibility)
+                if let Some(row_idx) = self.state.view.table_hovered_row {
+                    if row_idx < points_data.len() {
+                        plot_ui.points(
+                            Points::new("", vec![points_data[row_idx]])
+                                .color(egui::Color32::WHITE)
+                                .filled(true)
+                                .radius(6.0)
+                                .shape(egui_plot::MarkerShape::Circle),
+                        );
+                    }
+                }
+
+                // Draw moving average if enabled
+                if self.state.spc.show_moving_avg && points_data.len() >= self.state.spc.ma_window {
+                    let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
+                    let ma_y = Self::calculate_sma(&y_values, self.state.spc.ma_window);
+
+                    // Map MA y-values to actual x-values
+                    let ma_points: Vec<[f64; 2]> = ma_y.iter()
+                        .map(|&[idx, y_val]| {
+                            let actual_x = points_data[idx as usize][0];
+                            [actual_x, y_val]
+                        })
+                        .collect();
+
+                    if !ma_points.is_empty() {
+                        let ma_color = egui::Color32::from_rgb(100, 100, 100);
+                        plot_ui.line(
+                            Line::new(format!("{} MA({})", name, self.state.spc.ma_window), ma_points)
+                                .color(ma_color)
+                                .style(egui_plot::LineStyle::Dashed { length: 5.0 })
+                                .width(1.5),
+                        );
+                    }
+                }
+
+                // Draw EWMA if enabled
+                if self.state.spc.show_ewma && !points_data.is_empty() {
+                    let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
+                    let ewma_y = Self::calculate_ewma(&y_values, self.state.spc.ewma_lambda);
+
+                    // Map EWMA y-values to actual x-values
+                    let ewma_points: Vec<[f64; 2]> = ewma_y.iter()
+                        .map(|&[idx, y_val]| {
+                            let actual_x = points_data[idx as usize][0];
+                            [actual_x, y_val]
+                        })
+                        .collect();
+
+                    if !ewma_points.is_empty() {
+                        let ewma_color = egui::Color32::from_rgb(80, 150, 80);
+                        plot_ui.line(
+                            Line::new(format!("{} EWMA(λ={:.2})", name, self.state.spc.ewma_lambda), ewma_points)
+                                .color(ewma_color)
+                                .style(egui_plot::LineStyle::Solid)
+                                .width(2.0),
+                        );
+                    }
+                }
+
+                // Draw regression if enabled
+                if self.state.spc.show_regression && points_data.len() >= self.state.spc.regression_order + 1 {
+                    if self.state.spc.regression_order == 1 {
+                        // Linear regression
+                        if let Some((slope, intercept, r2)) = Self::linear_regression(points_data) {
+                            let x_min = points_data.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
+                            let x_max = points_data.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max);
+
+                            let reg_line = vec![
+                                [x_min, slope * x_min + intercept],
+                                [x_max, slope * x_max + intercept],
+                            ];
+
+                            plot_ui.line(
+                                Line::new(format!("{} Lin (R²={:.3})", name, r2), reg_line)
+                                    .color(egui::Color32::from_rgb(180, 100, 180))
                                     .style(egui_plot::LineStyle::Solid)
                                     .width(2.0),
                             );
-                            plot_ui.hline(
-                                HLine::new("USL", self.state.spc.spec_upper)
-                                    .color(egui::Color32::from_rgb(255, 140, 0))
+                        }
+                    } else {
+                        // Polynomial regression
+                        if let Some((coeffs, r2)) = Self::polynomial_regression(points_data, self.state.spc.regression_order) {
+                            let x_min = points_data.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
+                            let x_max = points_data.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max);
+
+                            let num_points = 100;
+                            let step = (x_max - x_min) / num_points as f64;
+                            let poly_line: Vec<[f64; 2]> = (0..=num_points)
+                                .map(|i| {
+                                    let x = x_min + i as f64 * step;
+                                    let y: f64 = coeffs.iter().enumerate()
+                                        .map(|(i, &c)| c * x.powi(i as i32))
+                                        .sum();
+                                    [x, y]
+                                })
+                                .collect();
+
+                            plot_ui.line(
+                                Line::new(format!("{} Poly{} (R²={:.3})", name, self.state.spc.regression_order, r2), poly_line)
+                                    .color(egui::Color32::from_rgb(180, 100, 180))
                                     .style(egui_plot::LineStyle::Solid)
                                     .width(2.0),
                             );
                         }
+                    }
+                }
 
-                        // Draw SPC control limits if enabled
-                        if self.state.spc.show_spc_limits {
-                            let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let (mean, std_dev) = Self::calculate_statistics(&y_values);
-                            let ucl = mean + self.state.spc.sigma_multiplier * std_dev;
-                            let lcl = mean - self.state.spc.sigma_multiplier * std_dev;
+                    }
+                }
+                PlotMode::Histogram => {
+                    // Histogram mode - show histogram with proper bin widths
+                    // Note: We ignore the X-axis data and work only with Y-values
+                    for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
+                        let color = Self::get_series_color(series_idx);
+                        let name = &self.headers[y_idx];
 
-                            // Center line (mean)
+                        // Get Y values directly from data (not from all_series which has X,Y pairs)
+                        let y_values: Vec<f64> = self.data.iter()
+                            .map(|row| row[y_idx])
+                            .filter(|&v| !v.is_nan() && v.is_finite())
+                            .collect();
+
+                        let (hist_data, _min, bin_width) = Self::calculate_histogram(&y_values, self.state.view.histogram_bins);
+
+                        if !hist_data.is_empty() {
+                            // Calculate bar width based on bin_width and number of series
+                            let bar_width = bin_width * 0.9 / self.state.view.y_indices.len() as f64;
+                            let offset = (series_idx as f64 - (self.state.view.y_indices.len() - 1) as f64 / 2.0) * bar_width;
+
+                            let bars: Vec<Bar> = hist_data.iter()
+                                .map(|&[x, count]| {
+                                    // X is the bin left edge, center within bin and add offset for multiple series
+                                    Bar::new(x + bin_width / 2.0 + offset, count).width(bar_width)
+                                })
+                                .collect();
+
+                            plot_ui.bar_chart(
+                                BarChart::new(name.clone(), bars)
+                                    .color(color)
+                            );
+                        }
+                    }
+                }
+                PlotMode::BoxPlot => {
+                    // Box plot mode - only show box plots
+                    for (series_idx, (&y_idx, points_data)) in self.state.view.y_indices.iter().zip(&all_series).enumerate() {
+                        let color = Self::get_series_color(series_idx);
+                        let name = &self.headers[y_idx];
+                        let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
+
+                        if let Some((lower_whisker, q1, median, q3, upper_whisker)) = Self::calculate_boxplot_stats(&y_values) {
+                            let x_pos = series_idx as f64;
+
+                            let box_elem = BoxElem::new(x_pos, BoxSpread::new(lower_whisker, q1, median, q3, upper_whisker));
+                            plot_ui.box_plot(
+                                BoxPlot::new(format!("{}", name), vec![box_elem])
+                                    .color(color)
+                            );
+                        }
+                    }
+                }
+                PlotMode::Pareto => {
+                    // Pareto chart mode - frequency bars + cumulative line
+                    for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
+                        let color = Self::get_series_color(series_idx);
+                        let name = &self.headers[y_idx];
+
+                        // Get Y values directly from data
+                        let y_values: Vec<f64> = self.data.iter()
+                            .map(|row| row[y_idx])
+                            .filter(|&v| !v.is_nan() && v.is_finite())
+                            .collect();
+
+                        let (freq_data, cumulative_pct) = Self::calculate_pareto(&y_values);
+
+                        if !freq_data.is_empty() {
+                            // Draw frequency bars
+                            let bar_width = 0.8 / self.state.view.y_indices.len() as f64;
+                            let offset = (series_idx as f64 - (self.state.view.y_indices.len() - 1) as f64 / 2.0) * bar_width;
+
+                            let bars: Vec<Bar> = freq_data.iter()
+                                .enumerate()
+                                .map(|(i, &(_, count))| {
+                                    Bar::new(i as f64 + offset, count as f64).width(bar_width)
+                                })
+                                .collect();
+
+                            plot_ui.bar_chart(
+                                BarChart::new(format!("{} Frequency", name), bars)
+                                    .color(color)
+                            );
+
+                            // Draw cumulative percentage line (scaled to match bar heights)
+                            let max_count = freq_data.iter().map(|(_, c)| c).max().unwrap_or(&1);
+                            let scale_factor = *max_count as f64 / 100.0;
+
+                            let cumulative_line: Vec<[f64; 2]> = cumulative_pct.iter()
+                                .enumerate()
+                                .map(|(i, &pct)| [i as f64, pct * scale_factor])
+                                .collect();
+
+                            plot_ui.line(
+                                Line::new(format!("{} Cumulative %", name), cumulative_line)
+                                    .color(egui::Color32::RED)
+                                    .style(egui_plot::LineStyle::Solid)
+                                    .width(2.5)
+                            );
+
+                            // Draw 80% line (Pareto principle)
+                            let line_80 = 80.0 * scale_factor;
                             plot_ui.hline(
-                                HLine::new(format!("{} Mean", name), mean)
+                                HLine::new("80% Line", line_80)
+                                    .color(egui::Color32::from_rgb(255, 165, 0))
+                                    .style(egui_plot::LineStyle::Dashed { length: 8.0 })
+                                    .width(2.0)
+                            );
+                        }
+                    }
+                }
+                PlotMode::XbarR => {
+                    // X-bar and R chart mode - shows process mean and range control charts
+                    // This mode requires displaying TWO charts, so we'll show only the first Y-series
+                    if let Some(&y_idx) = self.state.view.y_indices.first() {
+                        let color = Self::get_series_color(0);
+                        let name = &self.headers[y_idx];
+
+                        // Get Y values directly from data
+                        let y_values: Vec<f64> = self.data.iter()
+                            .map(|row| row[y_idx])
+                            .filter(|&v| !v.is_nan() && v.is_finite())
+                            .collect();
+
+                        let (xbar_points, r_points, xbar_mean, xbar_ucl, xbar_lcl, r_mean, r_ucl, r_lcl) =
+                            Self::calculate_xbarr(&y_values, self.state.spc.xbarr_subgroup_size);
+
+                        if !xbar_points.is_empty() {
+                            // Note: egui_plot doesn't support dual Y-axes easily
+                            // We'll draw X-bar and R on the same plot with different colors
+
+                            // Draw X-bar points and lines
+                            plot_ui.line(Line::new(format!("{} X-bar", name), xbar_points.clone()).color(color));
+                            plot_ui.points(Points::new(format!("{} X-bar", name), xbar_points.clone()).radius(4.0).color(color));
+
+                            // X-bar control limits
+                            plot_ui.hline(
+                                HLine::new(format!("{} X-bar Mean", name), xbar_mean)
                                     .color(color)
                                     .style(egui_plot::LineStyle::Dashed { length: 8.0 })
-                                    .width(1.5),
+                                    .width(2.0)
                             );
-
-                            // Upper control limit
                             plot_ui.hline(
-                                HLine::new(format!("{} UCL", name), ucl)
+                                HLine::new(format!("{} X-bar UCL", name), xbar_ucl)
                                     .color(egui::Color32::RED)
                                     .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                                    .width(2.0),
+                                    .width(2.0)
                             );
-
-                            // Lower control limit
                             plot_ui.hline(
-                                HLine::new(format!("{} LCL", name), lcl)
+                                HLine::new(format!("{} X-bar LCL", name), xbar_lcl)
                                     .color(egui::Color32::RED)
                                     .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                                    .width(2.0),
+                                    .width(2.0)
                             );
+
+                            // Draw R points and lines (with different color)
+                            let r_color = egui::Color32::from_rgb(255, 127, 14); // Orange
+                            plot_ui.line(Line::new(format!("{} R-chart", name), r_points.clone()).color(r_color));
+                            plot_ui.points(Points::new(format!("{} R-chart", name), r_points.clone()).radius(4.0).color(r_color).shape(egui_plot::MarkerShape::Diamond));
+
+                            // R control limits
+                            plot_ui.hline(
+                                HLine::new(format!("{} R Mean", name), r_mean)
+                                    .color(r_color)
+                                    .style(egui_plot::LineStyle::Dashed { length: 8.0 })
+                                    .width(2.0)
+                            );
+                            plot_ui.hline(
+                                HLine::new(format!("{} R UCL", name), r_ucl)
+                                    .color(egui::Color32::from_rgb(200, 0, 0))
+                                    .style(egui_plot::LineStyle::Dashed { length: 10.0 })
+                                    .width(2.0)
+                            );
+                            if r_lcl > 0.0 {
+                                plot_ui.hline(
+                                    HLine::new(format!("{} R LCL", name), r_lcl)
+                                        .color(egui::Color32::from_rgb(200, 0, 0))
+                                        .style(egui_plot::LineStyle::Dashed { length: 10.0 })
+                                        .width(2.0)
+                                );
+                            }
                         }
+                    }
+                }
+                PlotMode::PChart => {
+                    // p-chart mode - proportion defective control chart
+                    if let Some(&y_idx) = self.state.view.y_indices.first() {
+                        let color = Self::get_series_color(0);
+                        let name = &self.headers[y_idx];
 
-                        // Draw data series
-                        match self.state.view.line_style {
-                            LineStyle::Line => {
-                                plot_ui.line(Line::new(name, points_data.clone()).color(color));
-                            }
-                            LineStyle::Points => {
-                                plot_ui.points(Points::new(name, points_data.clone()).radius(3.0).color(color));
-                            }
-                            LineStyle::LineAndPoints => {
-                                plot_ui.line(Line::new(name, points_data.clone()).color(color));
-                                plot_ui.points(Points::new(name, points_data.clone()).radius(3.0).color(color));
-                            }
-                        }
+                        // Get Y values (number of defects per sample)
+                        let defects: Vec<f64> = self.data.iter()
+                            .map(|row| row[y_idx])
+                            .filter(|&v| !v.is_nan() && v.is_finite())
+                            .collect();
 
-                        // Highlight outliers
-                        if self.state.spc.show_outliers {
-                            let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let outlier_indices = Self::detect_outliers(&y_values, self.state.spc.outlier_threshold);
-                            let outlier_points: Vec<[f64; 2]> = outlier_indices.iter()
-                                .map(|&i| points_data[i])
-                                .collect();
+                        let (proportions, p_bar, ucl, lcl) = Self::calculate_pchart(&defects, self.state.spc.pchart_sample_size);
 
-                            if !outlier_points.is_empty() {
-                                plot_ui.points(
-                                    Points::new(format!("{} Outliers", name), outlier_points)
+                        if !proportions.is_empty() {
+                            // Draw proportion points and line
+                            plot_ui.line(Line::new(format!("{} Proportion", name), proportions.clone()).color(color));
+                            plot_ui.points(Points::new(format!("{} Proportion", name), proportions.clone()).radius(4.0).color(color));
+
+                            // Draw p-bar (center line)
+                            plot_ui.hline(
+                                HLine::new("p-bar (avg proportion)", p_bar)
+                                    .color(color)
+                                    .style(egui_plot::LineStyle::Dashed { length: 8.0 })
+                                    .width(2.0)
+                            );
+
+                            // Draw UCL
+                            plot_ui.hline(
+                                HLine::new("UCL", ucl)
+                                    .color(egui::Color32::RED)
+                                    .style(egui_plot::LineStyle::Dashed { length: 10.0 })
+                                    .width(2.0)
+                            );
+
+                            // Draw LCL (if > 0)
+                            if lcl > 0.0 {
+                                plot_ui.hline(
+                                    HLine::new("LCL", lcl)
                                         .color(egui::Color32::RED)
-                                        .filled(true)
-                                        .radius(5.0)
-                                        .shape(egui_plot::MarkerShape::Diamond),
+                                        .style(egui_plot::LineStyle::Dashed { length: 10.0 })
+                                        .width(2.0)
                                 );
                             }
-                        }
-
-                        // Highlight Western Electric violations
-                        if self.state.spc.show_we_rules {
-                            let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let we_indices = Self::detect_western_electric_violations(&y_values);
-                            let we_points: Vec<[f64; 2]> = we_indices.iter()
-                                .map(|&i| points_data[i])
-                                .collect();
-
-                            if !we_points.is_empty() {
-                                plot_ui.points(
-                                    Points::new(format!("{} WE Violations", name), we_points)
-                                        .color(egui::Color32::from_rgb(255, 165, 0))
-                                        .filled(false)
-                                        .radius(7.0)
-                                        .shape(egui_plot::MarkerShape::Square),
-                                );
-                            }
-                        }
-
-                        // Highlight selected point
-                        if let Some((sel_series, sel_point)) = self.state.view.selected_point {
-                            if series_idx == sel_series && sel_point < points_data.len() {
-                                plot_ui.points(
-                                    Points::new("", vec![points_data[sel_point]])
-                                        .color(egui::Color32::from_rgb(255, 215, 0))
-                                        .filled(false)
-                                        .radius(10.0)
-                                        .shape(egui_plot::MarkerShape::Circle),
-                                );
-                            }
-                        }
-
-                        // Highlight table-hovered point (use white for visibility)
-                        if let Some(row_idx) = self.state.view.table_hovered_row {
-                            if row_idx < points_data.len() {
-                                plot_ui.points(
-                                    Points::new("", vec![points_data[row_idx]])
-                                        .color(egui::Color32::WHITE)
-                                        .filled(true)
-                                        .radius(6.0)
-                                        .shape(egui_plot::MarkerShape::Circle),
-                                );
-                            }
-                        }
-
-                        // Draw moving average if enabled
-                        if self.state.spc.show_moving_avg && points_data.len() >= self.state.spc.ma_window {
-                            let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let ma_y = Self::calculate_sma(&y_values, self.state.spc.ma_window);
-
-                            // Map MA y-values to actual x-values
-                            let ma_points: Vec<[f64; 2]> = ma_y.iter()
-                                .map(|&[idx, y_val]| {
-                                    let actual_x = points_data[idx as usize][0];
-                                    [actual_x, y_val]
-                                })
-                                .collect();
-
-                            if !ma_points.is_empty() {
-                                let ma_color = egui::Color32::from_rgb(100, 100, 100);
-                                plot_ui.line(
-                                    Line::new(format!("{} MA({})", name, self.state.spc.ma_window), ma_points)
-                                        .color(ma_color)
-                                        .style(egui_plot::LineStyle::Dashed { length: 5.0 })
-                                        .width(1.5),
-                                );
-                            }
-                        }
-
-                        // Draw EWMA if enabled
-                        if self.state.spc.show_ewma && !points_data.is_empty() {
-                            let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-                            let ewma_y = Self::calculate_ewma(&y_values, self.state.spc.ewma_lambda);
-
-                            // Map EWMA y-values to actual x-values
-                            let ewma_points: Vec<[f64; 2]> = ewma_y.iter()
-                                .map(|&[idx, y_val]| {
-                                    let actual_x = points_data[idx as usize][0];
-                                    [actual_x, y_val]
-                                })
-                                .collect();
-
-                            if !ewma_points.is_empty() {
-                                let ewma_color = egui::Color32::from_rgb(80, 150, 80);
-                                plot_ui.line(
-                                    Line::new(format!("{} EWMA(λ={:.2})", name, self.state.spc.ewma_lambda), ewma_points)
-                                        .color(ewma_color)
-                                        .style(egui_plot::LineStyle::Solid)
-                                        .width(2.0),
-                                );
-                            }
-                        }
-
-                        // Draw regression if enabled
-                        if self.state.spc.show_regression && points_data.len() >= self.state.spc.regression_order + 1 {
-                            if self.state.spc.regression_order == 1 {
-                                // Linear regression
-                                if let Some((slope, intercept, r2)) = Self::linear_regression(points_data) {
-                                    let x_min = points_data.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
-                                    let x_max = points_data.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max);
-
-                                    let reg_line = vec![
-                                        [x_min, slope * x_min + intercept],
-                                        [x_max, slope * x_max + intercept],
-                                    ];
-
-                                    plot_ui.line(
-                                        Line::new(format!("{} Lin (R²={:.3})", name, r2), reg_line)
-                                            .color(egui::Color32::from_rgb(180, 100, 180))
-                                            .style(egui_plot::LineStyle::Solid)
-                                            .width(2.0),
-                                    );
-                                }
-                            } else {
-                                // Polynomial regression
-                                if let Some((coeffs, r2)) = Self::polynomial_regression(points_data, self.state.spc.regression_order) {
-                                    let x_min = points_data.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
-                                    let x_max = points_data.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max);
-
-                                    let num_points = 100;
-                                    let step = (x_max - x_min) / num_points as f64;
-                                    let poly_line: Vec<[f64; 2]> = (0..=num_points)
-                                        .map(|i| {
-                                            let x = x_min + i as f64 * step;
-                                            let y: f64 = coeffs.iter().enumerate()
-                                                .map(|(i, &c)| c * x.powi(i as i32))
-                                                .sum();
-                                            [x, y]
-                                        })
-                                        .collect();
-
-                                    plot_ui.line(
-                                        Line::new(format!("{} Poly{} (R²={:.3})", name, self.state.spc.regression_order, r2), poly_line)
-                                            .color(egui::Color32::from_rgb(180, 100, 180))
-                                            .style(egui_plot::LineStyle::Solid)
-                                            .width(2.0),
-                                    );
-                                }
-                            }
-                        }
-
-                            }
-                        }
-                        PlotMode::Histogram => {
-                            // Histogram mode - show histogram with proper bin widths
-                            // Note: We ignore the X-axis data and work only with Y-values
-                            for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
-                                let color = Self::get_series_color(series_idx);
-                                let name = &self.headers[y_idx];
-
-                                // Get Y values directly from data (not from all_series which has X,Y pairs)
-                                let y_values: Vec<f64> = self.data.iter()
-                                    .map(|row| row[y_idx])
-                                    .filter(|&v| !v.is_nan() && v.is_finite())
-                                    .collect();
-
-                                let (hist_data, _min, bin_width) = Self::calculate_histogram(&y_values, self.state.view.histogram_bins);
-
-                                if !hist_data.is_empty() {
-                                    // Calculate bar width based on bin_width and number of series
-                                    let bar_width = bin_width * 0.9 / self.state.view.y_indices.len() as f64;
-                                    let offset = (series_idx as f64 - (self.state.view.y_indices.len() - 1) as f64 / 2.0) * bar_width;
-
-                                    let bars: Vec<Bar> = hist_data.iter()
-                                        .map(|&[x, count]| {
-                                            // X is the bin left edge, center within bin and add offset for multiple series
-                                            Bar::new(x + bin_width / 2.0 + offset, count).width(bar_width)
-                                        })
-                                        .collect();
-
-                                    plot_ui.bar_chart(
-                                        BarChart::new(name.clone(), bars)
-                                            .color(color)
-                                    );
-                                }
-                            }
-                        }
-                        PlotMode::BoxPlot => {
-                            // Box plot mode - only show box plots
-                            for (series_idx, (&y_idx, points_data)) in self.state.view.y_indices.iter().zip(&all_series).enumerate() {
-                                let color = Self::get_series_color(series_idx);
-                                let name = &self.headers[y_idx];
-                                let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
-
-                                if let Some((lower_whisker, q1, median, q3, upper_whisker)) = Self::calculate_boxplot_stats(&y_values) {
-                                    let x_pos = series_idx as f64;
-
-                                    let box_elem = BoxElem::new(x_pos, BoxSpread::new(lower_whisker, q1, median, q3, upper_whisker));
-                                    plot_ui.box_plot(
-                                        BoxPlot::new(format!("{}", name), vec![box_elem])
-                                            .color(color)
-                                    );
-                                }
-                            }
-                        }
-                        PlotMode::Pareto => {
-                            // Pareto chart mode - frequency bars + cumulative line
-                            for (series_idx, &y_idx) in self.state.view.y_indices.iter().enumerate() {
-                                let color = Self::get_series_color(series_idx);
-                                let name = &self.headers[y_idx];
-
-                                // Get Y values directly from data
-                                let y_values: Vec<f64> = self.data.iter()
-                                    .map(|row| row[y_idx])
-                                    .filter(|&v| !v.is_nan() && v.is_finite())
-                                    .collect();
-
-                                let (freq_data, cumulative_pct) = Self::calculate_pareto(&y_values);
-
-                                if !freq_data.is_empty() {
-                                    // Draw frequency bars
-                                    let bar_width = 0.8 / self.state.view.y_indices.len() as f64;
-                                    let offset = (series_idx as f64 - (self.state.view.y_indices.len() - 1) as f64 / 2.0) * bar_width;
-
-                                    let bars: Vec<Bar> = freq_data.iter()
-                                        .enumerate()
-                                        .map(|(i, &(_, count))| {
-                                            Bar::new(i as f64 + offset, count as f64).width(bar_width)
-                                        })
-                                        .collect();
-
-                                    plot_ui.bar_chart(
-                                        BarChart::new(format!("{} Frequency", name), bars)
-                                            .color(color)
-                                    );
-
-                                    // Draw cumulative percentage line (scaled to match bar heights)
-                                    let max_count = freq_data.iter().map(|(_, c)| c).max().unwrap_or(&1);
-                                    let scale_factor = *max_count as f64 / 100.0;
-
-                                    let cumulative_line: Vec<[f64; 2]> = cumulative_pct.iter()
-                                        .enumerate()
-                                        .map(|(i, &pct)| [i as f64, pct * scale_factor])
-                                        .collect();
-
-                                    plot_ui.line(
-                                        Line::new(format!("{} Cumulative %", name), cumulative_line)
-                                            .color(egui::Color32::RED)
-                                            .style(egui_plot::LineStyle::Solid)
-                                            .width(2.5)
-                                    );
-
-                                    // Draw 80% line (Pareto principle)
-                                    let line_80 = 80.0 * scale_factor;
-                                    plot_ui.hline(
-                                        HLine::new("80% Line", line_80)
-                                            .color(egui::Color32::from_rgb(255, 165, 0))
-                                            .style(egui_plot::LineStyle::Dashed { length: 8.0 })
-                                            .width(2.0)
-                                    );
-                                }
-                            }
-                        }
-                        PlotMode::XbarR => {
-                            // X-bar and R chart mode - shows process mean and range control charts
-                            // This mode requires displaying TWO charts, so we'll show only the first Y-series
-                            if let Some(&y_idx) = self.state.view.y_indices.first() {
-                                let color = Self::get_series_color(0);
-                                let name = &self.headers[y_idx];
-
-                                // Get Y values directly from data
-                                let y_values: Vec<f64> = self.data.iter()
-                                    .map(|row| row[y_idx])
-                                    .filter(|&v| !v.is_nan() && v.is_finite())
-                                    .collect();
-
-                                let (xbar_points, r_points, xbar_mean, xbar_ucl, xbar_lcl, r_mean, r_ucl, r_lcl) =
-                                    Self::calculate_xbarr(&y_values, self.state.spc.xbarr_subgroup_size);
-
-                                if !xbar_points.is_empty() {
-                                    // Note: egui_plot doesn't support dual Y-axes easily
-                                    // We'll draw X-bar and R on the same plot with different colors
-
-                                    // Draw X-bar points and lines
-                                    plot_ui.line(Line::new(format!("{} X-bar", name), xbar_points.clone()).color(color));
-                                    plot_ui.points(Points::new(format!("{} X-bar", name), xbar_points.clone()).radius(4.0).color(color));
-
-                                    // X-bar control limits
-                                    plot_ui.hline(
-                                        HLine::new(format!("{} X-bar Mean", name), xbar_mean)
-                                            .color(color)
-                                            .style(egui_plot::LineStyle::Dashed { length: 8.0 })
-                                            .width(2.0)
-                                    );
-                                    plot_ui.hline(
-                                        HLine::new(format!("{} X-bar UCL", name), xbar_ucl)
-                                            .color(egui::Color32::RED)
-                                            .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                                            .width(2.0)
-                                    );
-                                    plot_ui.hline(
-                                        HLine::new(format!("{} X-bar LCL", name), xbar_lcl)
-                                            .color(egui::Color32::RED)
-                                            .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                                            .width(2.0)
-                                    );
-
-                                    // Draw R points and lines (with different color)
-                                    let r_color = egui::Color32::from_rgb(255, 127, 14); // Orange
-                                    plot_ui.line(Line::new(format!("{} R-chart", name), r_points.clone()).color(r_color));
-                                    plot_ui.points(Points::new(format!("{} R-chart", name), r_points.clone()).radius(4.0).color(r_color).shape(egui_plot::MarkerShape::Diamond));
-
-                                    // R control limits
-                                    plot_ui.hline(
-                                        HLine::new(format!("{} R Mean", name), r_mean)
-                                            .color(r_color)
-                                            .style(egui_plot::LineStyle::Dashed { length: 8.0 })
-                                            .width(2.0)
-                                    );
-                                    plot_ui.hline(
-                                        HLine::new(format!("{} R UCL", name), r_ucl)
-                                            .color(egui::Color32::from_rgb(200, 0, 0))
-                                            .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                                            .width(2.0)
-                                    );
-                                    if r_lcl > 0.0 {
-                                        plot_ui.hline(
-                                            HLine::new(format!("{} R LCL", name), r_lcl)
-                                                .color(egui::Color32::from_rgb(200, 0, 0))
-                                                .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                                                .width(2.0)
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        PlotMode::PChart => {
-                            // p-chart mode - proportion defective control chart
-                            if let Some(&y_idx) = self.state.view.y_indices.first() {
-                                let color = Self::get_series_color(0);
-                                let name = &self.headers[y_idx];
-
-                                // Get Y values (number of defects per sample)
-                                let defects: Vec<f64> = self.data.iter()
-                                    .map(|row| row[y_idx])
-                                    .filter(|&v| !v.is_nan() && v.is_finite())
-                                    .collect();
-
-                                let (proportions, p_bar, ucl, lcl) = Self::calculate_pchart(&defects, self.state.spc.pchart_sample_size);
-
-                                if !proportions.is_empty() {
-                                    // Draw proportion points and line
-                                    plot_ui.line(Line::new(format!("{} Proportion", name), proportions.clone()).color(color));
-                                    plot_ui.points(Points::new(format!("{} Proportion", name), proportions.clone()).radius(4.0).color(color));
-
-                                    // Draw p-bar (center line)
-                                    plot_ui.hline(
-                                        HLine::new("p-bar (avg proportion)", p_bar)
-                                            .color(color)
-                                            .style(egui_plot::LineStyle::Dashed { length: 8.0 })
-                                            .width(2.0)
-                                    );
-
-                                    // Draw UCL
-                                    plot_ui.hline(
-                                        HLine::new("UCL", ucl)
-                                            .color(egui::Color32::RED)
-                                            .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                                            .width(2.0)
-                                    );
-
-                                    // Draw LCL (if > 0)
-                                    if lcl > 0.0 {
-                                        plot_ui.hline(
-                                            HLine::new("LCL", lcl)
-                                                .color(egui::Color32::RED)
-                                                .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                                                .width(2.0)
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-
-                // Calculate excursions for table highlighting
-                let mut all_excursions = std::collections::HashSet::new();
-                let mut all_we_violations = Vec::new();
-
-                if self.state.spc.show_outliers || self.state.spc.show_spc_limits || self.state.spc.show_we_rules {
-                    for series_idx in 0..self.state.view.y_indices.len() {
-                        let y_values: Vec<f64> = all_series[series_idx].iter().map(|p| p[1]).collect();
-
-                        if self.state.spc.show_outliers {
-                            let outliers = Self::detect_outliers(&y_values, self.state.spc.outlier_threshold);
-                            all_excursions.extend(outliers);
-                        }
-
-                        if self.state.spc.show_spc_limits {
-                            let (mean, std_dev) = Self::calculate_statistics(&y_values);
-                            let ucl = mean + self.state.spc.sigma_multiplier * std_dev;
-                            let lcl = mean - self.state.spc.sigma_multiplier * std_dev;
-
-                            for (i, &v) in y_values.iter().enumerate() {
-                                if v > ucl || v < lcl {
-                                    all_excursions.insert(i);
-                                }
-                            }
-                        }
-
-                        if self.state.spc.show_we_rules {
-                            let we_detailed = Self::detect_western_electric_violations_detailed(&y_values);
-                            for violation in &we_detailed {
-                                all_excursions.insert(violation.point_index);
-                            }
-                            all_we_violations.extend(we_detailed);
                         }
                     }
                 }
-                self.state.spc.excursion_rows = all_excursions.into_iter().collect();
-                self.state.spc.we_violations = all_we_violations;
+            }
+        });
 
-                // Handle right-click context menu
-                plot_response.response.context_menu(|ui| {
-                    if ui.button("Reset View").clicked() {
-                        self.state.view.reset_bounds = true;
-                        ui.close();
-                    }
-                    if ui.button("Toggle Grid").clicked() {
-                        self.state.view.show_grid = !self.state.view.show_grid;
-                        ui.close();
-                    }
-                    if ui.button("Toggle Legend").clicked() {
-                        self.state.view.show_legend = !self.state.view.show_legend;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Clear Selection").clicked() {
-                        self.state.view.selected_point = None;
-                        ui.close();
-                    }
-                });
+        // Calculate excursions for table highlighting
+        let mut all_excursions = std::collections::HashSet::new();
+        let mut all_we_violations = Vec::new();
 
-                // Handle click to select point first
-                let was_clicked = plot_response.response.clicked();
-                let click_pos = plot_response.response.interact_pointer_pos();
+        if self.state.spc.show_outliers || self.state.spc.show_spc_limits || self.state.spc.show_we_rules {
+            for series_idx in 0..self.state.view.y_indices.len() {
+                let y_values: Vec<f64> = all_series[series_idx].iter().map(|p| p[1]).collect();
 
-                // Show hover tooltip
-                if let Some(pointer_pos) = plot_response.response.hover_pos() {
-                    let plot_pos = plot_response.transform.value_from_position(pointer_pos);
+                if self.state.spc.show_outliers {
+                    let outliers = Self::detect_outliers(&y_values, self.state.spc.outlier_threshold);
+                    all_excursions.extend(outliers);
+                }
 
-                    // Find closest point across all series
-                    let mut closest_series_idx = 0;
-                    let mut closest_point_idx = 0;
-                    let mut min_dist = f64::INFINITY;
+                if self.state.spc.show_spc_limits {
+                    let (mean, std_dev) = Self::calculate_statistics(&y_values);
+                    let ucl = mean + self.state.spc.sigma_multiplier * std_dev;
+                    let lcl = mean - self.state.spc.sigma_multiplier * std_dev;
 
-                    for (series_idx, points_data) in all_series.iter().enumerate() {
-                        for (point_idx, point) in points_data.iter().enumerate() {
-                            let dx = (point[0] - plot_pos.x) / (plot_response.transform.bounds().width());
-                            let dy = (point[1] - plot_pos.y) / (plot_response.transform.bounds().height());
-                            let dist = dx * dx + dy * dy;
-
-                            if dist < min_dist {
-                                min_dist = dist;
-                                closest_series_idx = series_idx;
-                                closest_point_idx = point_idx;
-                            }
+                    for (i, &v) in y_values.iter().enumerate() {
+                        if v > ucl || v < lcl {
+                            all_excursions.insert(i);
                         }
                     }
+                }
 
-                    // Only show tooltip if close enough
-                    if min_dist < 0.0004 {
-                        self.state.view.hovered_point = Some((closest_series_idx, closest_point_idx));
-                        let point = &all_series[closest_series_idx][closest_point_idx];
-                        let y_idx = self.state.view.y_indices[closest_series_idx];
-
-                        let x_label = if self.state.view.x_is_timestamp {
-                            DateTime::<Utc>::from_timestamp(point[0] as i64, 0)
-                                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                                .unwrap_or_else(|| format!("{:.2}", point[0]))
-                        } else {
-                            format!("{:.2}", point[0])
-                        };
-
-                        let y_is_timestamp = self.is_column_timestamp(y_idx);
-                        let y_label = if y_is_timestamp {
-                            DateTime::<Utc>::from_timestamp(point[1] as i64, 0)
-                                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                                .unwrap_or_else(|| format!("{:.2}", point[1]))
-                        } else {
-                            format!("{:.2}", point[1])
-                        };
-
-                        plot_response.response.on_hover_ui(|ui| {
-                            ui.label(format!("Row: {}", closest_point_idx + 1));
-                            ui.label(format!("{}: {}", self.headers[self.state.view.x_index], x_label));
-                            let color = Self::get_series_color(closest_series_idx);
-                            ui.colored_label(color, format!("{}: {}", self.headers[y_idx], y_label));
-
-                            // Show WE rule violations if any
-                            if self.state.spc.show_we_rules {
-                                for violation in &self.state.spc.we_violations {
-                                    if violation.point_index == closest_point_idx {
-                                        ui.separator();
-                                        ui.colored_label(egui::Color32::from_rgb(255, 165, 0), "⚠ WE Rule Violations:");
-                                        for rule in &violation.rules {
-                                            ui.label(format!("  • {}", rule));
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                        });
-                    } else {
-                        self.state.view.hovered_point = None;
+                if self.state.spc.show_we_rules {
+                    let we_detailed = Self::detect_western_electric_violations_detailed(&y_values);
+                    for violation in &we_detailed {
+                        all_excursions.insert(violation.point_index);
                     }
+                    all_we_violations.extend(we_detailed);
+                }
+            }
+        }
+        self.state.spc.excursion_rows = all_excursions.into_iter().collect();
+        self.state.spc.we_violations = all_we_violations;
+
+        // Handle right-click context menu
+        plot_response.response.context_menu(|ui| {
+            if ui.button("Reset View").clicked() {
+                self.state.view.reset_bounds = true;
+                ui.close();
+            }
+            if ui.button("Toggle Grid").clicked() {
+                self.state.view.show_grid = !self.state.view.show_grid;
+                ui.close();
+            }
+            if ui.button("Toggle Legend").clicked() {
+                self.state.view.show_legend = !self.state.view.show_legend;
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Clear Selection").clicked() {
+                self.state.view.selected_point = None;
+                ui.close();
+            }
+        });
+
+        // Handle click to select point first
+        let was_clicked = plot_response.response.clicked();
+        let click_pos = plot_response.response.interact_pointer_pos();
+
+        // Show hover tooltip
+        if let Some(pointer_pos) = plot_response.response.hover_pos() {
+            let plot_pos = plot_response.transform.value_from_position(pointer_pos);
+
+            // Find closest point across all series
+            let mut closest_series_idx = 0;
+            let mut closest_point_idx = 0;
+            let mut min_dist = f64::INFINITY;
+
+            for (series_idx, points_data) in all_series.iter().enumerate() {
+                for (point_idx, point) in points_data.iter().enumerate() {
+                    let dx = (point[0] - plot_pos.x) / (plot_response.transform.bounds().width());
+                    let dy = (point[1] - plot_pos.y) / (plot_response.transform.bounds().height());
+                    let dist = dx * dx + dy * dy;
+
+                    if dist < min_dist {
+                        min_dist = dist;
+                        closest_series_idx = series_idx;
+                        closest_point_idx = point_idx;
+                    }
+                }
+            }
+
+            // Only show tooltip if close enough
+            if min_dist < 0.0004 {
+                self.state.view.hovered_point = Some((closest_series_idx, closest_point_idx));
+                let point = &all_series[closest_series_idx][closest_point_idx];
+                let y_idx = self.state.view.y_indices[closest_series_idx];
+
+                let x_label = if self.state.view.x_is_timestamp {
+                    DateTime::<Utc>::from_timestamp(point[0] as i64, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_else(|| format!("{:.2}", point[0]))
                 } else {
-                    self.state.view.hovered_point = None;
-                }
+                    format!("{:.2}", point[0])
+                };
 
+                let y_is_timestamp = self.is_column_timestamp(y_idx);
+                let y_label = if y_is_timestamp {
+                    DateTime::<Utc>::from_timestamp(point[1] as i64, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_else(|| format!("{:.2}", point[1]))
+                } else {
+                    format!("{:.2}", point[1])
+                };
 
-                // Process click event (stored before on_hover_ui consumed the response)
-                if was_clicked {
-                    if let Some(pointer_pos) = click_pos {
-                        let plot_pos = plot_response.transform.value_from_position(pointer_pos);
+                plot_response.response.on_hover_ui(|ui| {
+                    ui.label(format!("Row: {}", closest_point_idx + 1));
+                    ui.label(format!("{}: {}", self.headers[self.state.view.x_index], x_label));
+                    let color = Self::get_series_color(closest_series_idx);
+                    ui.colored_label(color, format!("{}: {}", self.headers[y_idx], y_label));
 
-                        // Find closest point across all series
-                        let mut closest_series_idx = 0;
-                        let mut closest_point_idx = 0;
-                        let mut min_dist = f64::INFINITY;
-
-                        for (series_idx, points_data) in all_series.iter().enumerate() {
-                            for (point_idx, point) in points_data.iter().enumerate() {
-                                let dx = (point[0] - plot_pos.x) / (plot_response.transform.bounds().width());
-                                let dy = (point[1] - plot_pos.y) / (plot_response.transform.bounds().height());
-                                let dist = dx * dx + dy * dy;
-
-                                if dist < min_dist {
-                                    min_dist = dist;
-                                    closest_series_idx = series_idx;
-                                    closest_point_idx = point_idx;
+                    // Show WE rule violations if any
+                    if self.state.spc.show_we_rules {
+                        for violation in &self.state.spc.we_violations {
+                            if violation.point_index == closest_point_idx {
+                                ui.separator();
+                                ui.colored_label(egui::Color32::from_rgb(255, 165, 0), "⚠ WE Rule Violations:");
+                                for rule in &violation.rules {
+                                    ui.label(format!("  • {}", rule));
                                 }
+                                break;
                             }
                         }
+                    }
+                });
+            } else {
+                self.state.view.hovered_point = None;
+            }
+        } else {
+            self.state.view.hovered_point = None;
+        }
 
-                        // Select if close enough, otherwise deselect
-                        if min_dist < 0.0004 {
-                            // Clear selection if switching to a different series
-                            if let Some((prev_series, _)) = self.state.view.selected_point {
-                                if prev_series != closest_series_idx {
-                                    self.state.view.selected_point = None;
-                                }
-                            }
-                            self.state.view.selected_point = Some((closest_series_idx, closest_point_idx));
-                            self.state.ui.scroll_to_row = Some(closest_point_idx);
-                        } else {
+        // Process click event (stored before on_hover_ui consumed the response)
+        if was_clicked {
+            if let Some(pointer_pos) = click_pos {
+                let plot_pos = plot_response.transform.value_from_position(pointer_pos);
+
+                // Find closest point across all series
+                let mut closest_series_idx = 0;
+                let mut closest_point_idx = 0;
+                let mut min_dist = f64::INFINITY;
+
+                for (series_idx, points_data) in all_series.iter().enumerate() {
+                    for (point_idx, point) in points_data.iter().enumerate() {
+                        let dx = (point[0] - plot_pos.x) / (plot_response.transform.bounds().width());
+                        let dy = (point[1] - plot_pos.y) / (plot_response.transform.bounds().height());
+                        let dist = dx * dx + dy * dy;
+
+                        if dist < min_dist {
+                            min_dist = dist;
+                            closest_series_idx = series_idx;
+                            closest_point_idx = point_idx;
+                        }
+                    }
+                }
+
+                // Select if close enough, otherwise deselect
+                if min_dist < 0.0004 {
+                    // Clear selection if switching to a different series
+                    if let Some((prev_series, _)) = self.state.view.selected_point {
+                        if prev_series != closest_series_idx {
                             self.state.view.selected_point = None;
                         }
                     }
+                    self.state.view.selected_point = Some((closest_series_idx, closest_point_idx));
+                    self.state.ui.scroll_to_row = Some(closest_point_idx);
+                } else {
+                    self.state.view.selected_point = None;
                 }
-            } else {
-                ui.vertical_centered(|ui| {
-                    ui.heading("No data loaded");
-                    ui.label("Click 'Open CSV File' or drag and drop a CSV file to get started");
-                });
             }
+        }
+    }
+
+}
+
+impl App for PlotOxide {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Set theme
+        if self.state.view.dark_mode {
+            ctx.set_visuals(egui::Visuals::dark());
+        } else {
+            ctx.set_visuals(egui::Visuals::light());
+        }
+
+        // Handle keyboard shortcuts
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::R) {
+                self.state.view.reset_bounds = true;
+            }
+            if i.key_pressed(egui::Key::G) {
+                self.state.view.show_grid = !self.state.view.show_grid;
+            }
+            if i.key_pressed(egui::Key::L) {
+                self.state.view.show_legend = !self.state.view.show_legend;
+            }
+            if i.key_pressed(egui::Key::T) {
+                self.state.view.dark_mode = !self.state.view.dark_mode;
+            }
+            if i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::F1) {
+                self.state.view.show_help = !self.state.view.show_help;
+            }
+            if i.key_pressed(egui::Key::Escape) {
+                self.state.view.show_help = false;
+            }
+        });
+
+        // Main layout using StripBuilder
+        CentralPanel::default().show(ctx, |ui| {
+            // Build horizontal strip layout
+            let mut horizontal_strip = StripBuilder::new(ui);
+
+            // Add series panel if we have headers
+            if !self.headers.is_empty() {
+                horizontal_strip = horizontal_strip.size(Size::exact(constants::layout::SERIES_PANEL_WIDTH));
+            }
+
+            // Add center (plot area) - takes remaining space
+            horizontal_strip = horizontal_strip.size(Size::remainder());
+
+            // Add data table panel if enabled
+            if self.state.view.show_data_table && !self.raw_data.is_empty() {
+                horizontal_strip = horizontal_strip.size(Size::exact(constants::layout::DATA_PANEL_WIDTH));
+            }
+
+            horizontal_strip.horizontal(|mut strip| {
+                // Left panel: Series selection
+                if !self.headers.is_empty() {
+                    strip.cell(|ui| {
+                        self.render_series_panel(ctx, ui);
+                    });
+                }
+
+                // Center: Toolbar/controls and plot
+                strip.cell(|ui| {
+                    // Build vertical strip for toolbar, plot, and stats
+                    let mut vertical_strip = StripBuilder::new(ui);
+
+                    // Toolbar area (auto-sized to content)
+                    vertical_strip = vertical_strip.size(Size::initial(120.0));
+
+                    // Plot area (remainder of space)
+                    vertical_strip = vertical_strip.size(Size::remainder());
+
+                    // Stats panel (conditional)
+                    if self.state.view.show_stats_panel && !self.state.view.y_indices.is_empty() {
+                        vertical_strip = vertical_strip.size(Size::exact(constants::layout::STATS_PANEL_HEIGHT));
+                    }
+
+                    vertical_strip.vertical(|mut strip| {
+                        // Toolbar and controls
+                        strip.cell(|ui| {
+                            let has_data = self.render_toolbar_and_controls(ctx, ui);
+
+                            // If no data to plot, show message
+                            if !has_data {
+                                ui.vertical_centered(|ui| {
+                                    ui.heading("No data loaded");
+                                    ui.label("Click 'Open CSV File' or drag and drop a CSV file to get started");
+                                });
+                            }
+                        });
+
+                        // Plot area
+                        strip.cell(|ui| {
+                            // Only render plot if we have data and Y series selected
+                            if !self.headers.is_empty() && !self.data.is_empty() && !self.state.view.y_indices.is_empty() {
+                                self.render_plot(ctx, ui);
+                            }
+                        });
+
+                        // Stats panel (conditional)
+                        if self.state.view.show_stats_panel && !self.state.view.y_indices.is_empty() {
+                            strip.cell(|ui| {
+                                self.render_stats_panel(ui);
+                            });
+                        }
+                    });
+                });
+
+                // Right panel: Data table
+                if self.state.view.show_data_table && !self.raw_data.is_empty() {
+                    strip.cell(|ui| {
+                        self.render_data_table_panel(ui);
+                    });
+                }
+            });
 
             // Status bar at bottom
             ui.add_space(ui.available_height() - 20.0);
@@ -2274,7 +2393,7 @@ impl App for PlotOxide {
             ui.horizontal(|ui| {
                 if let Some(ref file) = self.state.current_file {
                     if let Some(name) = file.file_name() {
-                        ui.label(format!("� {}", name.to_string_lossy()));
+                        ui.label(format!("📁 {}", name.to_string_lossy()));
                         ui.separator();
                     }
                 }
@@ -2290,43 +2409,8 @@ impl App for PlotOxide {
             });
         });
 
-        // Help overlay
-        if self.state.view.show_help {
-            egui::Window::new("� Keyboard Shortcuts")
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    ui.heading("Navigation");
-                    ui.label("R - Reset view");
-                    ui.label("G - Toggle grid");
-                    ui.label("L - Toggle legend");
-                    ui.label("T - Toggle dark/light theme");
-                    ui.label("H / F1 - Toggle help");
-                    ui.label("ESC - Close help");
-
-                    ui.separator();
-                    ui.heading("Mouse Controls");
-                    ui.label("Scroll - Zoom in/out");
-                    ui.label("Shift + Scroll - Zoom X-axis only");
-                    ui.label("Ctrl + Scroll - Zoom Y-axis only");
-                    ui.label("Drag - Pan view");
-                    ui.label("Alt + Drag - Box zoom");
-                    ui.label("Click point - Select point");
-                    ui.label("Right-click - Context menu");
-
-                    ui.separator();
-                    ui.heading("Series Selection");
-                    ui.label("Click - Select single");
-                    ui.label("Ctrl/Cmd + Click - Toggle item");
-                    ui.label("Shift + Click - Select range");
-                    ui.label("Ctrl + Shift + Click - Add range");
-
-                    ui.separator();
-                    if ui.button("Close").clicked() {
-                        self.state.view.show_help = false;
-                    }
-                });
-        }
+        // Help dialog
+        self.render_help_dialog(ctx);
     }
 }
 
