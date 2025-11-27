@@ -1247,6 +1247,7 @@ impl App for PlotOxide {
                     egui::ComboBox::from_label("Recent")
                         .selected_text("▼")
                         .show_ui(ui, |ui| {
+                            // Need to clone to avoid borrow checker issues with load_csv
                             for path in self.state.recent_files.clone().iter() {
                                 if let Some(name) = path.file_name() {
                                     if ui.button(name.to_string_lossy()).clicked() {
@@ -1260,24 +1261,24 @@ impl App for PlotOxide {
                         });
                 }
 
-                if let Some(ref file) = self.state.current_file {
-                    ui.label(format!("File: {}", file.display()));
-                }
+                // Display current file using Option combinator
+                self.state.current_file
+                    .as_ref()
+                    .map(|file| ui.label(format!("File: {}", file.display())));
             });
 
             ui.separator();
 
-            // Handle drag and drop
+            // Handle drag and drop using Option combinators
             ctx.input(|i| {
-                if !i.raw.dropped_files.is_empty() {
-                    if let Some(dropped_file) = i.raw.dropped_files.first() {
-                        if let Some(ref path) = dropped_file.path {
-                            if let Err(e) = self.load_csv(path.clone()) {
-                                self.state.ui.set_error(e.user_message());
-                            }
+                i.raw.dropped_files
+                    .first()
+                    .and_then(|f| f.path.as_ref())
+                    .map(|path| {
+                        if let Err(e) = self.load_csv(path.clone()) {
+                            self.state.ui.set_error(e.user_message());
                         }
-                    }
-                }
+                    });
             });
 
             // Show plot only if we have data
