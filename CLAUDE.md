@@ -149,6 +149,71 @@ The codebase has been transformed from a monolithic mega-struct to a modular, ma
 
 ---
 
+**Phase 3: Layout Improvements (Strip Layout)** - Started 2025-11-27
+
+### Completed (Session 1) - 🎉 StripBuilder Layout Complete!
+- ✅ Added `LayoutMode` enum to ViewState:
+  - `Compact` - Small screens (<800px)
+  - `Normal` - Medium screens (800-1200px)
+  - `Wide` - Large screens (>1200px)
+
+- ✅ Added responsive layout infrastructure:
+  - `show_series_panel` flag to ViewState
+  - `get_layout_mode()` helper method for screen width detection
+  - Exported LayoutMode from state module
+
+- ✅ Extracted 6 modular helper methods from monolithic `update()`:
+  - `render_series_panel()` - Y series selection (left sidebar)
+  - `render_stats_panel()` - Statistics summary (bottom panel)
+  - `render_data_table_panel()` - Data table with filter/sort (right sidebar)
+  - `render_help_dialog()` - Keyboard shortcuts window
+  - `render_toolbar_and_controls()` - File selection, axis selection, plot options, SPC controls, filters
+  - `render_plot()` - Main plot rendering logic (~760 lines)
+
+- ✅ Rewrote `update()` method using `egui_extras::StripBuilder`:
+  - **Horizontal strip**: series panel | center content | data table
+  - **Vertical strip (center)**: toolbar | plot area | stats panel
+  - Panel sizing uses constants from `constants::layout`
+  - Conditional rendering respects visibility flags
+  - Reduced `update()` from ~1,400 lines to ~135 lines (90% reduction!)
+
+- ✅ Panel sizing configuration:
+  - Series panel: `Size::exact(200.0)` - Left sidebar
+  - Stats panel: `Size::exact(120.0)` - Bottom panel
+  - Data table: `Size::exact(400.0)` - Right sidebar
+  - Toolbar: `Size::initial(120.0)` - Auto-adjusts for content
+  - Plot area: `Size::remainder()` - Takes all remaining space
+
+- ✅ Build & test verification:
+  - Clean compilation (only benign unused warnings)
+  - All 8 tests passing (100% success rate)
+  - Zero functional changes - full backward compatibility
+  - Release build successful (1m 53s)
+
+### Migration Status: Phase 3 COMPLETE! ✨
+The UI layout has been modernized with a flexible StripBuilder architecture:
+- ✅ Modular panel system with clean separation of concerns
+- ✅ Proper space distribution and responsive sizing
+- ✅ Foundation for future responsive breakpoints
+- ✅ Easy to modify individual panels without affecting others
+- ✅ Dramatically improved code maintainability
+
+### Metrics
+- **Method extraction**: 1 update() → 6 focused render methods
+- **Lines reduced**: update() went from ~1,400 lines to ~135 lines (90% reduction)
+- **Code organization**: 3 files changed, 1,251 insertions, 1,141 deletions
+- **Test success rate**: 100% (8/8 tests passing)
+- **Build time**: 1m 53s (release mode)
+
+### Next Steps (Phase 4: Modular Controls)
+- [ ] Extract SpcControls widget
+- [ ] Extract FilterControls widget
+- [ ] Create compact toolbar with icon buttons
+- [ ] Add collapsible sections for control groups
+- [ ] Test touch/small screen interactions
+
+---
+
 ## Phase 1: Polars/Parquet Migration
 
 ### Current Pain Points
