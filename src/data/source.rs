@@ -242,3 +242,80 @@ impl DataSource {
         Ok(super::stats::calculate_stats(&series))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::Builder;
+
+    #[test]
+    fn test_datasource_csv_loading() {
+        // Create a temporary CSV file with .csv extension
+        let mut file = Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(file, "x,y,z").unwrap();
+        writeln!(file, "1,2,3").unwrap();
+        writeln!(file, "4,5,6").unwrap();
+        writeln!(file, "7,8,9").unwrap();
+        file.flush().unwrap();
+
+        // Load with DataSource
+        let ds = DataSource::load(file.path()).unwrap();
+
+        // Verify dimensions
+        assert_eq!(ds.height(), 3);
+        assert_eq!(ds.width(), 3);
+
+        // Verify column names
+        let names = ds.column_names();
+        assert_eq!(names, vec!["x", "y", "z"]);
+
+        // Verify data extraction
+        let col_x = ds.column_as_f64(0).unwrap();
+        assert_eq!(col_x, vec![1.0, 4.0, 7.0]);
+
+        let col_y = ds.column_as_f64(1).unwrap();
+        assert_eq!(col_y, vec![2.0, 5.0, 8.0]);
+    }
+
+    #[test]
+    fn test_datasource_row_major_conversion() {
+        // Create a temporary CSV file with .csv extension
+        let mut file = Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(file, "a,b").unwrap();
+        writeln!(file, "1,2").unwrap();
+        writeln!(file, "3,4").unwrap();
+        file.flush().unwrap();
+
+        let ds = DataSource::load(file.path()).unwrap();
+
+        // Test row-major conversion
+        let rows = ds.as_row_major_f64();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec![1.0, 2.0]);
+        assert_eq!(rows[1], vec![3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_datasource_statistics() {
+        // Create a temporary CSV file with .csv extension
+        let mut file = Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(file, "values").unwrap();
+        writeln!(file, "1").unwrap();
+        writeln!(file, "2").unwrap();
+        writeln!(file, "3").unwrap();
+        writeln!(file, "4").unwrap();
+        writeln!(file, "5").unwrap();
+        file.flush().unwrap();
+
+        let ds = DataSource::load(file.path()).unwrap();
+
+        // Test statistics calculation
+        let stats = ds.column_stats(0).unwrap();
+        assert_eq!(stats.mean, 3.0);
+        assert_eq!(stats.median, 3.0);
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 5.0);
+        assert_eq!(stats.count, 5);
+    }
+}
