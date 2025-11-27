@@ -130,12 +130,22 @@ The codebase has been transformed from a monolithic mega-struct to a modular, ma
 - **Test success rate**: 100% (8/8 tests passing)
 - **Default impl**: 65 lines → 8 lines (88% reduction)
 
-### Future Improvements (Phase 2 Polish)
-- [ ] Replace remaining `Result<(), String>` with `Result<(), PlotError>`
-- [ ] Replace `eprintln!` with UI error toast/status display
+### Completed (Session 2) - Polish Work
+- ✅ Replaced `Result<(), String>` with `Result<(), PlotError>`
+  - Added `From<DataError>` conversion to PlotError
+  - Updated load_csv() signature
+- ✅ Replaced all `eprintln!` calls (9 instances) with UI error handling
+  - Added error_message field to UiState
+  - Errors captured for UI display (toast/status bar)
+- ✅ Option combinator improvements
+  - Simplified nested if-let chains
+  - Applied `.map()`, `.and_then()` patterns
+  - More functional, idiomatic Rust
+
+### Future Improvements (Optional Polish)
 - [ ] Add builder patterns for complex config objects
-- [ ] Iterator refactoring pass (replace manual loops)
-- [ ] Option combinator cleanup (replace if-let chains)
+- [ ] Additional iterator refactoring opportunities
+- [ ] Further Option combinator simplifications
 
 ---
 
@@ -636,12 +646,15 @@ src/
 - [x] Update all field accesses (309 instances)
 - [x] Consolidate type definitions (LineStyle, PlotMode, WEViolation)
 
+#### Phase 2 Polish ✅ COMPLETE
+- [x] Replace Result<(), String> with Result<(), PlotError>
+- [x] Replace eprintln! with UI error handling (9 instances)
+- [x] Option combinator cleanup (nested if-let chains)
+
 #### Phase 2 Polish (Optional Future Work)
-- [ ] Replace remaining Result<(), String> with Result<(), PlotError>
-- [ ] Replace eprintln! with UI error toast/status display
 - [ ] Add builder patterns for complex config objects
-- [ ] Iterator refactoring pass (replace manual loops)
-- [ ] Option combinator cleanup (replace if-let chains)
+- [ ] Additional iterator refactoring opportunities
+- [ ] Further Option combinator simplifications
 
 ### Phase 3: Layout
 - [ ] Implement StripBuilder layout
