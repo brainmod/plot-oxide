@@ -23,6 +23,9 @@ mod state;
 // Import types from state modules
 use state::{LineStyle, PlotMode, WEViolation};
 
+// Import error types
+use error::PlotError;
+
 #[derive(Serialize, Deserialize)]
 struct ViewConfig {
     show_grid: bool,
@@ -202,10 +205,9 @@ impl PlotOxide {
         true
     }
 
-    fn load_csv(&mut self, path: PathBuf) -> Result<(), String> {
+    fn load_csv(&mut self, path: PathBuf) -> Result<(), PlotError> {
         // Use new DataSource for loading
-        let data_source = data::DataSource::load(&path)
-            .map_err(|e| format!("Failed to load file: {}", e))?;
+        let data_source = data::DataSource::load(&path)?;
 
         // Extract data for legacy compatibility
         let headers = data_source.column_names();
@@ -248,7 +250,7 @@ impl PlotOxide {
         self.state.view.reset_bounds = true;
     }
 
-    fn save_config(&self) {
+    fn save_config(&mut self) {
         let config = ViewConfig {
             show_grid: self.state.view.show_grid,
             show_legend: self.state.view.show_legend,
@@ -279,9 +281,14 @@ impl PlotOxide {
             .set_file_name("view_config.json")
             .save_file()
         {
-            if let Ok(json) = serde_json::to_string_pretty(&config) {
-                if let Err(e) = std::fs::write(&path, json) {
-                    eprintln!("Failed to save config: {}", e);
+            match serde_json::to_string_pretty(&config) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&path, json) {
+                        self.state.ui.set_error(format!("Failed to save config: {}", e));
+                    }
+                }
+                Err(e) => {
+                    self.state.ui.set_error(format!("Failed to serialize config: {}", e));
                 }
             }
         }
@@ -292,32 +299,40 @@ impl PlotOxide {
             .add_filter("JSON", &["json"])
             .pick_file()
         {
-            if let Ok(contents) = std::fs::read_to_string(&path) {
-                if let Ok(config) = serde_json::from_str::<ViewConfig>(&contents) {
-                    self.state.view.show_grid = config.show_grid;
-                    self.state.view.show_legend = config.show_legend;
-                    self.state.view.line_style = config.line_style;
-                    self.state.spc.show_spc_limits = config.show_spc_limits;
-                    self.state.spc.sigma_multiplier = config.sigma_multiplier;
-                    self.state.spc.show_sigma_zones = config.show_sigma_zones;
-                    self.state.spc.show_outliers = config.show_outliers;
-                    self.state.spc.outlier_threshold = config.outlier_threshold;
-                    self.state.spc.show_moving_avg = config.show_moving_avg;
-                    self.state.spc.ma_window = config.ma_window;
-                    self.state.spc.show_ewma = config.show_ewma;
-                    self.state.spc.ewma_lambda = config.ewma_lambda;
-                    self.state.spc.show_regression = config.show_regression;
-                    self.state.spc.regression_order = config.regression_order;
-                    self.state.view.show_histogram = config.show_histogram;
-                    self.state.view.histogram_bins = config.histogram_bins;
-                    self.state.view.show_boxplot = config.show_boxplot;
-                    self.state.spc.show_capability = config.show_capability;
-                    self.state.spc.spec_lower = config.spec_lower;
-                    self.state.spc.spec_upper = config.spec_upper;
-                    self.state.spc.show_we_rules = config.show_we_rules;
-                    self.state.view.dark_mode = config.dark_mode;
-                } else {
-                    eprintln!("Failed to parse config file");
+            match std::fs::read_to_string(&path) {
+                Ok(contents) => {
+                    match serde_json::from_str::<ViewConfig>(&contents) {
+                        Ok(config) => {
+                            self.state.view.show_grid = config.show_grid;
+                            self.state.view.show_legend = config.show_legend;
+                            self.state.view.line_style = config.line_style;
+                            self.state.spc.show_spc_limits = config.show_spc_limits;
+                            self.state.spc.sigma_multiplier = config.sigma_multiplier;
+                            self.state.spc.show_sigma_zones = config.show_sigma_zones;
+                            self.state.spc.show_outliers = config.show_outliers;
+                            self.state.spc.outlier_threshold = config.outlier_threshold;
+                            self.state.spc.show_moving_avg = config.show_moving_avg;
+                            self.state.spc.ma_window = config.ma_window;
+                            self.state.spc.show_ewma = config.show_ewma;
+                            self.state.spc.ewma_lambda = config.ewma_lambda;
+                            self.state.spc.show_regression = config.show_regression;
+                            self.state.spc.regression_order = config.regression_order;
+                            self.state.view.show_histogram = config.show_histogram;
+                            self.state.view.histogram_bins = config.histogram_bins;
+                            self.state.view.show_boxplot = config.show_boxplot;
+                            self.state.spc.show_capability = config.show_capability;
+                            self.state.spc.spec_lower = config.spec_lower;
+                            self.state.spc.spec_upper = config.spec_upper;
+                            self.state.spc.show_we_rules = config.show_we_rules;
+                            self.state.view.dark_mode = config.dark_mode;
+                        }
+                        Err(e) => {
+                            self.state.ui.set_error(format!("Failed to parse config file: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.state.ui.set_error(format!("Failed to read config file: {}", e));
                 }
             }
         }
@@ -750,7 +765,7 @@ impl PlotOxide {
         (cp, cpk)
     }
 
-    fn export_csv(&self) {
+    fn export_csv(&mut self) {
         if self.data.is_empty() {
             return;
         }
@@ -766,7 +781,7 @@ impl PlotOxide {
             let mut writer = match std::fs::File::create(&path) {
                 Ok(f) => std::io::BufWriter::new(f),
                 Err(e) => {
-                    eprintln!("Failed to create file: {}", e);
+                    self.state.ui.set_error(format!("Failed to create file: {}", e));
                     return;
                 }
             };
@@ -774,7 +789,7 @@ impl PlotOxide {
             // Write header
             let header_line = self.headers.join(",");
             if let Err(e) = writeln!(writer, "{}", header_line) {
-                eprintln!("Failed to write header: {}", e);
+                self.state.ui.set_error(format!("Failed to write header: {}", e));
                 return;
             }
 
@@ -782,13 +797,13 @@ impl PlotOxide {
             for row in &self.raw_data {
                 let row_line = row.join(",");
                 if let Err(e) = writeln!(writer, "{}", row_line) {
-                    eprintln!("Failed to write row: {}", e);
+                    self.state.ui.set_error(format!("Failed to write row: {}", e));
                     return;
                 }
             }
 
             if let Err(e) = writer.flush() {
-                eprintln!("Failed to flush writer: {}", e);
+                self.state.ui.set_error(format!("Failed to flush writer: {}", e));
             }
         }
     }
@@ -1222,7 +1237,7 @@ impl App for PlotOxide {
                         .pick_file()
                     {
                         if let Err(e) = self.load_csv(path) {
-                            eprintln!("Error loading file: {}", e);
+                            self.state.ui.set_error(e.user_message());
                         }
                     }
                 }
@@ -1237,7 +1252,7 @@ impl App for PlotOxide {
                                     if ui.button(name.to_string_lossy()).clicked() {
                                         let path_clone = path.clone();
                                         if let Err(e) = self.load_csv(path_clone) {
-                                            eprintln!("Error loading file: {}", e);
+                                            self.state.ui.set_error(e.user_message());
                                         }
                                     }
                                 }
@@ -1258,7 +1273,7 @@ impl App for PlotOxide {
                     if let Some(dropped_file) = i.raw.dropped_files.first() {
                         if let Some(ref path) = dropped_file.path {
                             if let Err(e) = self.load_csv(path.clone()) {
-                                eprintln!("Error loading dropped file: {}", e);
+                                self.state.ui.set_error(e.user_message());
                             }
                         }
                     }

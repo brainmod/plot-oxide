@@ -16,6 +16,10 @@ pub enum PlotError {
     #[error("Data processing error: {0}")]
     Polars(#[from] polars::error::PolarsError),
 
+    /// Data error from DataSource
+    #[error("Data error: {0}")]
+    Data(#[from] crate::data::DataError),
+
     /// Configuration file error
     #[error("Configuration error: {0}")]
     Config(String),
@@ -71,6 +75,7 @@ impl PlotError {
         match self {
             PlotError::FileIo(e) => format!("File error: {}", e),
             PlotError::Polars(e) => format!("Data error: {}", e),
+            PlotError::Data(e) => format!("Data error: {}", e),
             PlotError::Config(msg) => format!("Config error: {}", msg),
             PlotError::UnsupportedFormat { extension } => {
                 format!("Unsupported file format: '.{}'", extension)
@@ -104,6 +109,7 @@ impl PlotError {
         match self {
             PlotError::FileIo(_) => "File Error",
             PlotError::Polars(_) => "Data Error",
+            PlotError::Data(_) => "Data Error",
             PlotError::Config(_) => "Configuration Error",
             PlotError::UnsupportedFormat { .. } => "Unsupported Format",
             PlotError::ColumnNotFound { .. } => "Column Not Found",

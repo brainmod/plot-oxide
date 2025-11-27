@@ -14,6 +14,9 @@ pub struct UiState {
 
     /// Sort direction (true = ascending, false = descending)
     pub sort_ascending: bool,
+
+    /// Error message to display in UI (toast/status bar)
+    pub error_message: Option<String>,
 }
 
 impl UiState {
@@ -24,6 +27,7 @@ impl UiState {
             scroll_to_row: None,
             sort_column: None,
             sort_ascending: true,
+            error_message: None,
         }
     }
 
@@ -80,5 +84,20 @@ impl UiState {
     /// Clear scroll target (should be called after scrolling is complete)
     pub fn clear_scroll_target(&mut self) {
         self.scroll_to_row = None;
+    }
+
+    /// Set an error message to display in the UI
+    pub fn set_error(&mut self, message: impl Into<String>) {
+        self.error_message = Some(message.into());
+    }
+
+    /// Clear the current error message
+    pub fn clear_error(&mut self) {
+        self.error_message = None;
+    }
+
+    /// Check if there's an error to display
+    pub fn has_error(&self) -> bool {
+        self.error_message.is_some()
     }
 }
