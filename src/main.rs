@@ -1,13 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use csv::ReaderBuilder;
 use eframe::App;
 use eframe::egui::{self, CentralPanel, ComboBox, SidePanel, TopBottomPanel};
 use egui_extras::{Column, TableBuilder};
 use egui_plot::{Bar, BarChart, BoxElem, BoxPlot, BoxSpread, HLine, Line, Plot, Points};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+
+// Data module for Polars-based data handling
+mod data;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum LineStyle {
@@ -59,9 +61,14 @@ struct ViewConfig {
 }
 
 struct PlotOxide {
+    // New Polars-based data handling
+    data_source: Option<data::DataSource>,
+
+    // Legacy fields (to be removed after full migration)
     headers: Vec<String>,
     raw_data: Vec<Vec<String>>,  // Store raw string data
     data: Vec<Vec<f64>>,         // Numeric data for plotting
+
     x_index: usize,
     use_row_index: bool,
     y_indices: Vec<usize>,       // Multiple Y series
@@ -127,6 +134,7 @@ struct PlotOxide {
 impl Default for PlotOxide {
     fn default() -> Self {
         Self {
+            data_source: None,
             headers: Vec::new(),
             raw_data: Vec::new(),
             data: Vec::new(),
@@ -323,30 +331,17 @@ impl PlotOxide {
     }
 
     fn load_csv(&mut self, path: PathBuf) -> Result<(), String> {
-        let mut rdr = ReaderBuilder::new()
-            .from_path(&path)
-            .map_err(|e| format!("Failed to open file: {}", e))?;
+        // Use new DataSource for loading
+        let data_source = data::DataSource::load(&path)
+            .map_err(|e| format!("Failed to load file: {}", e))?;
 
-        let headers = rdr
-            .headers()
-            .map_err(|e| format!("Failed to read headers: {}", e))?
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        // Extract data for legacy compatibility
+        let headers = data_source.column_names();
+        let raw_data = data_source.as_row_major_string();
+        let data = data_source.as_row_major_f64();
 
-        let mut raw_data = vec![];
-        let mut data = vec![];
-
-        for result in rdr.records() {
-            let record = result.map_err(|e| format!("Failed to read record: {}", e))?;
-
-            let raw_row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
-            let numeric_row: Vec<f64> = raw_row.iter().map(|s| Self::parse_value(s).0).collect();
-
-            raw_data.push(raw_row);
-            data.push(numeric_row);
-        }
-
+        // Store both new and legacy representations
+        self.data_source = Some(data_source);
         self.headers = headers;
         self.raw_data = raw_data;
         self.data = data;
