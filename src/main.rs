@@ -52,8 +52,8 @@ impl App for PlotOxide {
             // Build horizontal strip layout
             let mut horizontal_strip = StripBuilder::new(ui);
 
-            // Add series panel if we have headers
-            if !self.headers.is_empty() {
+            // Add series panel if we have data
+            if self.state.has_data() {
                 horizontal_strip = horizontal_strip.size(Size::exact(constants::layout::SERIES_PANEL_WIDTH));
             }
 
@@ -61,13 +61,13 @@ impl App for PlotOxide {
             horizontal_strip = horizontal_strip.size(Size::remainder());
 
             // Add data table panel if enabled
-            if self.state.view.show_data_table && !self.raw_data.is_empty() {
+            if self.state.view.show_data_table && self.state.has_data() {
                 horizontal_strip = horizontal_strip.size(Size::exact(constants::layout::DATA_PANEL_WIDTH));
             }
 
             horizontal_strip.horizontal(|mut strip| {
                 // Left panel: Series selection
-                if !self.headers.is_empty() {
+                if self.state.has_data() {
                     strip.cell(|ui| {
                         ui::render_series_panel(self, ctx, ui);
                     });
@@ -106,7 +106,7 @@ impl App for PlotOxide {
                         // Plot area
                         strip.cell(|ui| {
                             // Only render plot if we have data and Y series selected
-                            if !self.headers.is_empty() && !self.data.is_empty() && !self.state.view.y_indices.is_empty() {
+                            if self.state.has_data() && !self.state.view.y_indices.is_empty() {
                                 ui::render_plot(self, ctx, ui);
                             }
                         });
@@ -121,7 +121,7 @@ impl App for PlotOxide {
                 });
 
                 // Right panel: Data table
-                if self.state.view.show_data_table && !self.raw_data.is_empty() {
+                if self.state.view.show_data_table && self.state.has_data() {
                     strip.cell(|ui| {
                         ui::render_data_table_panel(self, ui);
                     });
@@ -138,7 +138,7 @@ impl App for PlotOxide {
                         ui.separator();
                     }
                 }
-                ui.label(format!("Rows: {} | Cols: {}", self.data.len(), self.headers.len()));
+                ui.label(format!("Rows: {} | Cols: {}", self.state.row_count(), self.state.column_count()));
                 if !self.state.view.y_indices.is_empty() {
                     ui.separator();
                     ui.label(format!("Series: {}", self.state.view.y_indices.len()));

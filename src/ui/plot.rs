@@ -5,11 +5,15 @@ use egui_plot::{Bar, BarChart, BoxElem, BoxPlot, BoxSpread, HLine, Line, Plot, P
 
 /// Render the main plot area
 pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut eframe::egui::Ui) {
+        // Get data from DataSource
+        let data = app.data();
+        let headers = app.headers();
+
         // Pre-calculate statistics for outlier filtering (performance optimization)
         if app.state.filters.filter_outliers {
             app.state.outlier_stats_cache.clear();
             for &y_idx in &app.state.view.y_indices {
-                let y_values: Vec<f64> = app.data.iter().map(|row| row[y_idx]).collect();
+                let y_values: Vec<f64> = data.iter().map(|row| row[y_idx]).collect();
                 let stats = PlotOxide::calculate_statistics(&y_values);
                 app.state.outlier_stats_cache.insert(y_idx, stats);
             }
@@ -18,7 +22,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         // Create data for all series with filtering
         let all_series: Vec<Vec<[f64; 2]>> = app.state.view.y_indices.iter()
             .map(|&y_idx| {
-                let points: Vec<[f64; 2]> = app.data.iter()
+                let points: Vec<[f64; 2]> = data.iter()
                     .enumerate()
                     .filter_map(|(row_idx, row)| {
                         let x_val = if app.state.view.use_row_index {
@@ -93,7 +97,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                     // Plot each series in scatter mode
                     for (series_idx, (&y_idx, points_data)) in app.state.view.y_indices.iter().zip(&all_series).enumerate() {
                         let color = PlotOxide::get_series_color(series_idx);
-                        let name = &app.headers[y_idx];
+                        let name = &headers[y_idx];
 
                 // Draw sigma zone lines if enabled
                 if app.state.spc.show_sigma_zones && !points_data.is_empty() {
@@ -360,10 +364,10 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                     // Note: We ignore the X-axis data and work only with Y-values
                     for (series_idx, &y_idx) in app.state.view.y_indices.iter().enumerate() {
                         let color = PlotOxide::get_series_color(series_idx);
-                        let name = &app.headers[y_idx];
+                        let name = &headers[y_idx];
 
                         // Get Y values directly from data (not from all_series which has X,Y pairs)
-                        let y_values: Vec<f64> = app.data.iter()
+                        let y_values: Vec<f64> = data.iter()
                             .map(|row| row[y_idx])
                             .filter(|&v| !v.is_nan() && v.is_finite())
                             .collect();
@@ -393,7 +397,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                     // Box plot mode - only show box plots
                     for (series_idx, (&y_idx, points_data)) in app.state.view.y_indices.iter().zip(&all_series).enumerate() {
                         let color = PlotOxide::get_series_color(series_idx);
-                        let name = &app.headers[y_idx];
+                        let name = &headers[y_idx];
                         let y_values: Vec<f64> = points_data.iter().map(|p| p[1]).collect();
 
                         if let Some((lower_whisker, q1, median, q3, upper_whisker)) = PlotOxide::calculate_boxplot_stats(&y_values) {
@@ -411,10 +415,10 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                     // Pareto chart mode - frequency bars + cumulative line
                     for (series_idx, &y_idx) in app.state.view.y_indices.iter().enumerate() {
                         let color = PlotOxide::get_series_color(series_idx);
-                        let name = &app.headers[y_idx];
+                        let name = &headers[y_idx];
 
                         // Get Y values directly from data
-                        let y_values: Vec<f64> = app.data.iter()
+                        let y_values: Vec<f64> = data.iter()
                             .map(|row| row[y_idx])
                             .filter(|&v| !v.is_nan() && v.is_finite())
                             .collect();
@@ -470,10 +474,10 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                     // This mode requires displaying TWO charts, so we'll show only the first Y-series
                     if let Some(&y_idx) = app.state.view.y_indices.first() {
                         let color = PlotOxide::get_series_color(0);
-                        let name = &app.headers[y_idx];
+                        let name = &headers[y_idx];
 
                         // Get Y values directly from data
-                        let y_values: Vec<f64> = app.data.iter()
+                        let y_values: Vec<f64> = data.iter()
                             .map(|row| row[y_idx])
                             .filter(|&v| !v.is_nan() && v.is_finite())
                             .collect();
@@ -542,10 +546,10 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                     // p-chart mode - proportion defective control chart
                     if let Some(&y_idx) = app.state.view.y_indices.first() {
                         let color = PlotOxide::get_series_color(0);
-                        let name = &app.headers[y_idx];
+                        let name = &headers[y_idx];
 
                         // Get Y values (number of defects per sample)
-                        let defects: Vec<f64> = app.data.iter()
+                        let defects: Vec<f64> = data.iter()
                             .map(|row| row[y_idx])
                             .filter(|&v| !v.is_nan() && v.is_finite())
                             .collect();
@@ -698,9 +702,9 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
 
                 plot_response.response.on_hover_ui(|ui| {
                     ui.label(format!("Row: {}", closest_point_idx + 1));
-                    ui.label(format!("{}: {}", app.headers[app.state.view.x_index], x_label));
+                    ui.label(format!("{}: {}", headers[app.state.view.x_index], x_label));
                     let color = PlotOxide::get_series_color(closest_series_idx);
-                    ui.colored_label(color, format!("{}: {}", app.headers[y_idx], y_label));
+                    ui.colored_label(color, format!("{}: {}", headers[y_idx], y_label));
 
                     // Show WE rule violations if any
                     if app.state.spc.show_we_rules {

@@ -7,10 +7,14 @@ pub fn render_stats_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
 
     eframe::egui::ScrollArea::horizontal().show(ui, |ui| {
         ui.horizontal(|ui| {
+            // Get data from DataSource
+            let data = app.data();
+            let headers = app.headers();
+
             // Calculate all series data
             let all_series: Vec<Vec<[f64; 2]>> = app.state.view.y_indices.iter()
                 .map(|&y_idx| {
-                    app.data.iter()
+                    data.iter()
                         .map(|row| [row[app.state.view.x_index], row[y_idx]])
                         .collect()
                 })
@@ -18,7 +22,7 @@ pub fn render_stats_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
 
             for (series_idx, &y_idx) in app.state.view.y_indices.iter().enumerate() {
                 let color = PlotOxide::get_series_color(series_idx);
-                let name = &app.headers[y_idx];
+                let name = &headers[y_idx];
                 let y_values: Vec<f64> = all_series[series_idx].iter().map(|p| p[1]).collect();
 
                 if !y_values.is_empty() {

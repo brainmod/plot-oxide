@@ -1,6 +1,3 @@
-// Temporarily allow dead code during migration phase
-#![allow(dead_code)]
-
 use polars::prelude::*;
 
 /// Statistics results
