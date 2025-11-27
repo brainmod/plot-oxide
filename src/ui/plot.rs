@@ -51,13 +51,23 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
         let alt_held = ctx.input(|i| i.modifiers.alt);
 
+        // Calculate plot height with minimum constraints to ensure axis labels render properly
+        let available_height = ui.available_height();
+        let plot_height = if available_height > 600.0 {
+            // Cap maximum height to prevent axis label rendering issues
+            available_height.min(800.0)
+        } else {
+            // Use available height but ensure minimum for proper axis rendering
+            available_height.max(200.0)
+        };
+
         let mut plot = Plot::new("plot")
             .allow_zoom(app.state.view.allow_zoom)
             .allow_drag(app.state.view.allow_drag && !alt_held)
             .allow_boxed_zoom(app.state.view.allow_zoom && alt_held)
             .allow_scroll(app.state.view.allow_zoom)
             .show_grid(app.state.view.show_grid)
-            .height(ui.available_height());
+            .height(plot_height);
 
         // Apply axis-locked zoom if modifiers held
         if shift_held && app.state.view.allow_zoom {
@@ -80,9 +90,21 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
             plot = plot.x_axis_formatter(|mark, _range| {
                 let dt = DateTime::<Utc>::from_timestamp(mark.value as i64, 0);
                 if let Some(dt) = dt {
-                    dt.format("%Y-%m-%d\n%H:%M").to_string()
+                    // Use space instead of newline to prevent layout issues
+                    dt.format("%Y-%m-%d %H:%M").to_string()
                 } else {
+                    format!("{:.2}", mark.value)
+                }
+            });
+        } else {
+            // Ensure x-axis labels always render with sensible formatting
+            plot = plot.x_axis_formatter(|mark, _range| {
+                if mark.value.abs() < 0.01 && mark.value != 0.0 {
+                    format!("{:.2e}", mark.value)
+                } else if mark.value.abs() >= 1000.0 {
                     format!("{:.0}", mark.value)
+                } else {
+                    format!("{:.2}", mark.value)
                 }
             });
         }
@@ -681,10 +703,18 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
 
                 let x_label = if app.state.view.x_is_timestamp {
                     DateTime::<Utc>::from_timestamp(point[0] as i64, 0)
-                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                        .unwrap_or_else(|| format!("{:.2}", point[0]))
+                        .map(|dt| {
+                            // Show full timestamp in tooltip with milliseconds if present
+                            let frac = point[0].fract();
+                            if frac.abs() > 0.001 {
+                                format!("{}.{:03}", dt.format("%Y-%m-%d %H:%M:%S"), (frac * 1000.0).abs() as u32)
+                            } else {
+                                dt.format("%Y-%m-%d %H:%M:%S").to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| format!("{:.3}", point[0]))
                 } else {
-                    format!("{:.2}", point[0])
+                    format!("{:.4}", point[0])
                 };
 
                 let y_is_timestamp = app.is_column_timestamp(y_idx);
