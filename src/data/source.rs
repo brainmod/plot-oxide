@@ -168,11 +168,50 @@ impl DataSource {
 
         let series = self.column_values(&col_names[col_idx])?;
 
-        // Convert to string representation
-        Ok(series
-            .iter()
-            .map(|any_value| format!("{}", any_value))
-            .collect())
+        // Try to cast to string first for efficiency
+        if let Ok(str_series) = series.str() {
+            return Ok(str_series
+                .into_iter()
+                .map(|opt| opt.unwrap_or("").to_string())
+                .collect());
+        }
+
+        // For other types, convert through the chunked array
+        let n = series.len();
+        let mut result = Vec::with_capacity(n);
+
+        // Use rechunk to ensure we have a single chunk, then extract values
+        let rechunked = series.rechunk();
+
+        // Try different data types
+        if let Ok(ca) = rechunked.f64() {
+            for i in 0..n {
+                result.push(ca.get(i).map(|v| v.to_string()).unwrap_or_default());
+            }
+        } else if let Ok(ca) = rechunked.i64() {
+            for i in 0..n {
+                result.push(ca.get(i).map(|v| v.to_string()).unwrap_or_default());
+            }
+        } else if let Ok(ca) = rechunked.str() {
+            for i in 0..n {
+                result.push(ca.get(i).unwrap_or("").to_string());
+            }
+        } else if let Ok(ca) = rechunked.bool() {
+            for i in 0..n {
+                result.push(ca.get(i).map(|v| v.to_string()).unwrap_or_default());
+            }
+        } else {
+            // Fallback: use string conversion
+            let str_series = rechunked.cast(&DataType::String)
+                .map_err(|e| DataError::PolarsError(e))?;
+            let ca = str_series.str()
+                .map_err(|e| DataError::PolarsError(e))?;
+            for i in 0..n {
+                result.push(ca.get(i).unwrap_or("").to_string());
+            }
+        }
+
+        Ok(result)
     }
 
     /// Get all data as Vec<Vec<f64>> (row-major format)
