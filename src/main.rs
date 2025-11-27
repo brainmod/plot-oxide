@@ -20,8 +20,14 @@ mod error;
 // Application state modules
 mod state;
 
+// UI widgets
+mod widgets;
+
 // Import types from state modules
 use state::{LineStyle, PlotMode, WEViolation};
+
+// Import widgets
+use widgets::{SpcControls, FilterControls};
 
 // Import error types
 use error::PlotError;
@@ -1232,9 +1238,10 @@ impl PlotOxide {
     /// Render the toolbar and control panels
     /// Returns false if no Y series selected (skip plot rendering), true otherwise
     fn render_toolbar_and_controls(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) -> bool {
-        // File selection button
+        // Compact toolbar with icon buttons
         ui.horizontal(|ui| {
-            if ui.button("Open CSV File").clicked() {
+            // File operations
+            if ui.button("📂").on_hover_text("Open CSV File").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("CSV Files", &["csv"])
                     .pick_file()
@@ -1247,9 +1254,11 @@ impl PlotOxide {
 
             // Recent files menu
             if !self.state.recent_files.is_empty() {
-                egui::ComboBox::from_label("Recent")
-                    .selected_text("▼")
+                egui::ComboBox::from_label("")
+                    .selected_text("📋")
                     .show_ui(ui, |ui| {
+                        ui.label("Recent Files:");
+                        ui.separator();
                         // Need to clone to avoid borrow checker issues with load_csv
                         for path in self.state.recent_files.clone().iter() {
                             if let Some(name) = path.file_name() {
@@ -1264,10 +1273,12 @@ impl PlotOxide {
                     });
             }
 
+            ui.separator();
+
             // Display current file using Option combinator
             self.state.current_file
                 .as_ref()
-                .map(|file| ui.label(format!("File: {}", file.display())));
+                .map(|file| ui.label(format!("📄 {}", file.display())));
         });
 
         ui.separator();
@@ -1322,178 +1333,104 @@ impl PlotOxide {
                 }
             });
 
-            // Plot options
+            // Compact display controls with icon buttons
             ui.horizontal(|ui| {
                 ui.label("Display:");
-                ui.checkbox(&mut self.state.view.show_grid, "Grid (G)");
-                ui.checkbox(&mut self.state.view.show_legend, "Legend (L)");
-                ui.checkbox(&mut self.state.view.allow_zoom, "Zoom");
-                ui.checkbox(&mut self.state.view.allow_drag, "Pan");
-                ui.checkbox(&mut self.state.view.show_data_table, "Data Table");
-                ui.checkbox(&mut self.state.view.show_stats_panel, "Statistics");
+                ui.toggle_value(&mut self.state.view.show_grid, "⊞").on_hover_text("Grid (G)");
+                ui.toggle_value(&mut self.state.view.show_legend, "🏷").on_hover_text("Legend (L)");
+                ui.toggle_value(&mut self.state.view.allow_zoom, "🔍").on_hover_text("Zoom");
+                ui.toggle_value(&mut self.state.view.allow_drag, "✋").on_hover_text("Pan");
+                ui.toggle_value(&mut self.state.view.show_data_table, "📋").on_hover_text("Data Table");
+                ui.toggle_value(&mut self.state.view.show_stats_panel, "∑").on_hover_text("Statistics");
 
                 ui.separator();
-                ui.label("Export:");
-                if ui.button("CSV").clicked() {
+
+                if ui.button("💾").on_hover_text("Export CSV").clicked() {
                     self.export_csv();
                 }
-                ui.separator();
-                ui.label("Config:");
-                if ui.button("Save").clicked() {
+
+                if ui.button("⚙").on_hover_text("Save Config").clicked() {
                     self.save_config();
                 }
-                if ui.button("Load").clicked() {
+                if ui.button("📥").on_hover_text("Load Config").clicked() {
                     self.load_config();
                 }
 
                 ui.separator();
-                if ui.button(if self.state.view.dark_mode { "🌙 Dark" } else { "☀ Light" }).clicked() {
+                if ui.button(if self.state.view.dark_mode { "🌙" } else { "☀" }).on_hover_text("Toggle theme").clicked() {
                     self.state.view.dark_mode = !self.state.view.dark_mode;
                 }
 
                 ui.separator();
-
-                ui.label("Plot Mode:");
-                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Scatter, "Scatter/Line");
-                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Histogram, "Histogram");
-                if self.state.view.plot_mode == PlotMode::Histogram {
-                    ui.label("Bins:");
-                    ui.add(egui::Slider::new(&mut self.state.view.histogram_bins, 5..=50));
-                }
-                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::BoxPlot, "Box Plot");
-                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Pareto, "Pareto");
-                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::XbarR, "X-bar & R");
-                if self.state.view.plot_mode == PlotMode::XbarR {
-                    ui.label("Subgroup:");
-                    ui.add(egui::Slider::new(&mut self.state.spc.xbarr_subgroup_size, 2..=10));
-                }
-                ui.radio_value(&mut self.state.view.plot_mode, PlotMode::PChart, "p-chart");
-                if self.state.view.plot_mode == PlotMode::PChart {
-                    ui.label("Sample n:");
-                    ui.add(egui::Slider::new(&mut self.state.spc.pchart_sample_size, 10..=200));
-                }
-
-                if self.state.view.plot_mode == PlotMode::Scatter {
-                    ui.separator();
-                    ui.label("Style:");
-                    ui.radio_value(&mut self.state.view.line_style, LineStyle::Line, "Line");
-                    ui.radio_value(&mut self.state.view.line_style, LineStyle::Points, "Points");
-                    ui.radio_value(&mut self.state.view.line_style, LineStyle::LineAndPoints, "Both");
-                }
-
-                ui.separator();
-                if ui.button("? Help").clicked() {
+                if ui.button("❓").on_hover_text("Help (F1)").clicked() {
                     self.state.view.show_help = !self.state.view.show_help;
                 }
             });
 
+            // Plot mode and style controls (collapsible)
+            egui::CollapsingHeader::new("📈 Plot Mode & Style")
+                .id_salt("plot_mode")
+                .default_open(true)
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Mode:");
+                        ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Scatter, "Scatter/Line");
+                        ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Histogram, "Histogram");
+                        ui.radio_value(&mut self.state.view.plot_mode, PlotMode::BoxPlot, "Box Plot");
+                        ui.radio_value(&mut self.state.view.plot_mode, PlotMode::Pareto, "Pareto");
+                        ui.radio_value(&mut self.state.view.plot_mode, PlotMode::XbarR, "X-bar & R");
+                        ui.radio_value(&mut self.state.view.plot_mode, PlotMode::PChart, "p-chart");
+                    });
+
+                    // Mode-specific controls
+                    match self.state.view.plot_mode {
+                        PlotMode::Histogram => {
+                            ui.horizontal(|ui| {
+                                ui.label("Bins:");
+                                ui.add(egui::Slider::new(&mut self.state.view.histogram_bins, 5..=50));
+                            });
+                        }
+                        PlotMode::XbarR => {
+                            ui.horizontal(|ui| {
+                                ui.label("Subgroup:");
+                                ui.add(egui::Slider::new(&mut self.state.spc.xbarr_subgroup_size, 2..=10));
+                            });
+                        }
+                        PlotMode::PChart => {
+                            ui.horizontal(|ui| {
+                                ui.label("Sample n:");
+                                ui.add(egui::Slider::new(&mut self.state.spc.pchart_sample_size, 10..=200));
+                            });
+                        }
+                        PlotMode::Scatter => {
+                            ui.horizontal(|ui| {
+                                ui.label("Style:");
+                                ui.radio_value(&mut self.state.view.line_style, LineStyle::Line, "Line");
+                                ui.radio_value(&mut self.state.view.line_style, LineStyle::Points, "Points");
+                                ui.radio_value(&mut self.state.view.line_style, LineStyle::LineAndPoints, "Both");
+                            });
+                        }
+                        _ => {}
+                    }
+                });
+
             // Only show SPC/Analysis controls in Scatter mode
             if self.state.view.plot_mode == PlotMode::Scatter {
-                // SPC Controls
-                ui.horizontal(|ui| {
-                    ui.label("SPC:");
-                    ui.checkbox(&mut self.state.spc.show_spc_limits, "Control Limits");
-                    if self.state.spc.show_spc_limits {
-                        ui.label("σ:");
-                        ui.add(egui::Slider::new(&mut self.state.spc.sigma_multiplier, 1.0..=6.0).step_by(0.5));
-                    }
-                    ui.checkbox(&mut self.state.spc.show_sigma_zones, "Zones");
-                    ui.checkbox(&mut self.state.spc.show_we_rules, "WE Rules");
-                    ui.separator();
-                    ui.checkbox(&mut self.state.spc.show_capability, "Cp/Cpk");
-                    if self.state.spc.show_capability {
-                        ui.label("LSL:");
-                        ui.add(egui::DragValue::new(&mut self.state.spc.spec_lower).speed(0.1));
-                        ui.label("USL:");
-                        ui.add(egui::DragValue::new(&mut self.state.spc.spec_upper).speed(0.1));
-                    }
-                    ui.separator();
-                    ui.checkbox(&mut self.state.spc.show_outliers, "Outliers");
-                    if self.state.spc.show_outliers {
-                        ui.label("Z:");
-                        ui.add(egui::Slider::new(&mut self.state.spc.outlier_threshold, 2.0..=6.0).step_by(0.5));
-                    }
-                    ui.separator();
-                    ui.checkbox(&mut self.state.spc.show_moving_avg, "MA");
-                    if self.state.spc.show_moving_avg {
-                        ui.label("Win:");
-                        ui.add(egui::Slider::new(&mut self.state.spc.ma_window, 3..=50));
-                    }
-                    ui.checkbox(&mut self.state.spc.show_ewma, "EWMA");
-                    if self.state.spc.show_ewma {
-                        ui.label("λ:");
-                        ui.add(egui::Slider::new(&mut self.state.spc.ewma_lambda, 0.05..=0.5).step_by(0.05));
-                    }
-                    ui.separator();
-                    ui.checkbox(&mut self.state.spc.show_regression, "Regression");
-                    if self.state.spc.show_regression {
-                        ui.label("Order:");
-                        ui.add(egui::Slider::new(&mut self.state.spc.regression_order, 1..=4));
-                    }
-                });
+                // SPC Controls (collapsible)
+                egui::CollapsingHeader::new("📊 SPC Controls")
+                    .id_salt("spc_controls")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        SpcControls::new(&mut self.state.spc).show(ui);
+                    });
 
-                // Data Filtering Controls
-                ui.horizontal(|ui| {
-                    ui.label("Filters:");
-                    ui.checkbox(&mut self.state.filters.filter_empty, "Empty (Y series only)");
-
-                    ui.separator();
-
-                    // Y min/max filter
-                    ui.label("Y Range:");
-                    let mut y_min_enabled = self.state.filters.filter_y_min.is_some();
-                    ui.checkbox(&mut y_min_enabled, "Min");
-                    if y_min_enabled {
-                        let mut val = self.state.filters.filter_y_min.unwrap_or(0.0);
-                        ui.add(egui::DragValue::new(&mut val).speed(0.1));
-                        self.state.filters.filter_y_min = Some(val);
-                    } else {
-                        self.state.filters.filter_y_min = None;
-                    }
-
-                    let mut y_max_enabled = self.state.filters.filter_y_max.is_some();
-                    ui.checkbox(&mut y_max_enabled, "Max");
-                    if y_max_enabled {
-                        let mut val = self.state.filters.filter_y_max.unwrap_or(100.0);
-                        ui.add(egui::DragValue::new(&mut val).speed(0.1));
-                        self.state.filters.filter_y_max = Some(val);
-                    } else {
-                        self.state.filters.filter_y_max = None;
-                    }
-
-                    ui.separator();
-
-                    // X range filter
-                    ui.label("X Range:");
-                    let mut x_min_enabled = self.state.filters.filter_x_min.is_some();
-                    ui.checkbox(&mut x_min_enabled, "Min");
-                    if x_min_enabled {
-                        let mut val = self.state.filters.filter_x_min.unwrap_or(0.0);
-                        ui.add(egui::DragValue::new(&mut val).speed(0.1));
-                        self.state.filters.filter_x_min = Some(val);
-                    } else {
-                        self.state.filters.filter_x_min = None;
-                    }
-
-                    let mut x_max_enabled = self.state.filters.filter_x_max.is_some();
-                    ui.checkbox(&mut x_max_enabled, "Max");
-                    if x_max_enabled {
-                        let mut val = self.state.filters.filter_x_max.unwrap_or(100.0);
-                        ui.add(egui::DragValue::new(&mut val).speed(0.1));
-                        self.state.filters.filter_x_max = Some(val);
-                    } else {
-                        self.state.filters.filter_x_max = None;
-                    }
-
-                    ui.separator();
-
-                    // Outlier filter
-                    ui.checkbox(&mut self.state.filters.filter_outliers, "Filter Outliers");
-                    if self.state.filters.filter_outliers {
-                        ui.label("Z:");
-                        ui.add(egui::Slider::new(&mut self.state.filters.filter_outlier_sigma, 2.0..=6.0).step_by(0.5));
-                    }
-                });
+                // Data Filtering Controls (collapsible)
+                egui::CollapsingHeader::new("🔍 Filters")
+                    .id_salt("filter_controls")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        FilterControls::new(&mut self.state.filters).show(ui);
+                    });
             }
 
             ui.separator();
