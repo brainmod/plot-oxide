@@ -180,21 +180,20 @@ impl DataSource {
     pub fn as_row_major_f64(&self) -> Vec<Vec<f64>> {
         let n_rows = self.height();
         let n_cols = self.width();
-        let mut result = Vec::with_capacity(n_rows);
 
-        for row_idx in 0..n_rows {
-            let mut row = Vec::with_capacity(n_cols);
-            for col_idx in 0..n_cols {
-                let val = self.column_as_f64(col_idx)
-                    .ok()
-                    .and_then(|col| col.get(row_idx).copied())
-                    .unwrap_or(f64::NAN);
-                row.push(val);
-            }
-            result.push(row);
-        }
+        // Extract all columns once (column-major)
+        let columns: Vec<Vec<f64>> = (0..n_cols)
+            .map(|col_idx| self.column_as_f64(col_idx).unwrap_or_else(|_| vec![f64::NAN; n_rows]))
+            .collect();
 
-        result
+        // Transpose to row-major
+        (0..n_rows)
+            .map(|row_idx| {
+                columns.iter()
+                    .map(|col| col.get(row_idx).copied().unwrap_or(f64::NAN))
+                    .collect()
+            })
+            .collect()
     }
 
     /// Get all data as Vec<Vec<String>> (row-major format)
@@ -202,21 +201,20 @@ impl DataSource {
     pub fn as_row_major_string(&self) -> Vec<Vec<String>> {
         let n_rows = self.height();
         let n_cols = self.width();
-        let mut result = Vec::with_capacity(n_rows);
 
-        for row_idx in 0..n_rows {
-            let mut row = Vec::with_capacity(n_cols);
-            for col_idx in 0..n_cols {
-                let val = self.column_as_string(col_idx)
-                    .ok()
-                    .and_then(|col| col.get(row_idx).cloned())
-                    .unwrap_or_default();
-                row.push(val);
-            }
-            result.push(row);
-        }
+        // Extract all columns once (column-major)
+        let columns: Vec<Vec<String>> = (0..n_cols)
+            .map(|col_idx| self.column_as_string(col_idx).unwrap_or_else(|_| vec![String::new(); n_rows]))
+            .collect();
 
-        result
+        // Transpose to row-major
+        (0..n_rows)
+            .map(|row_idx| {
+                columns.iter()
+                    .map(|col| col.get(row_idx).cloned().unwrap_or_default())
+                    .collect()
+            })
+            .collect()
     }
 
     /// Get a specific cell value as f64
@@ -227,5 +225,20 @@ impl DataSource {
     /// Get a specific cell value as String
     pub fn get_string(&self, row: usize, col: usize) -> Option<String> {
         self.column_as_string(col).ok()?.get(row).cloned()
+    }
+
+    /// Get column by index as Series (for statistics and analysis)
+    pub fn get_column_series(&self, col_idx: usize) -> Result<Series, DataError> {
+        let col_names = self.column_names();
+        if col_idx >= col_names.len() {
+            return Err(DataError::ColumnNotFound(format!("Index {}", col_idx)));
+        }
+        self.column_values(&col_names[col_idx])
+    }
+
+    /// Calculate statistics for a column by index
+    pub fn column_stats(&self, col_idx: usize) -> Result<super::stats::Stats, DataError> {
+        let series = self.get_column_series(col_idx)?;
+        Ok(super::stats::calculate_stats(&series))
     }
 }

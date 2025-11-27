@@ -33,12 +33,26 @@ Transition from csv/`Vec<Vec<f64>>` to polars/parquet, improve idiomatic Rust pa
 - ✅ Removed csv::ReaderBuilder import (no longer needed)
 - ✅ Clean build with no warnings or errors
 
+### Completed (Session 3)
+- ✅ Optimized `as_row_major_f64()` and `as_row_major_string()` methods
+  - Changed from O(n*m²) to O(n*m) complexity
+  - Extract columns once, then transpose (much faster)
+- ✅ Created polars-based statistics module (`src/data/stats.rs`):
+  - `Stats` struct with mean, std_dev, median, min, max, count
+  - `calculate_stats()` - Comprehensive statistics using polars
+  - `calculate_statistics()` - Mean and std dev (compatible API)
+  - `calculate_median()` - Median calculation
+  - `detect_outliers()` - Z-score based outlier detection
+  - Legacy Vec<f64> compatibility functions
+  - Full test coverage
+- ✅ Added `get_column_series()` and `column_stats()` to DataSource
+- ✅ Analyzed LTTB downsampling - current implementation is optimal
+- ✅ Build verified - all modules compile cleanly
+
 ### Next Steps
 - Test application with sample CSV and Parquet files
-- Gradually migrate plot generation to use DataSource directly
-- Update statistics calculations to use polars expressions
-- Implement LTTB downsampling with polars operations
-- Remove legacy fields (headers, raw_data, data) after full migration
+- Gradually migrate existing statistics calls to use new stats module
+- Remove legacy fields (headers, raw_data, data) after validation
 - Remove csv crate dependency
 
 ---
@@ -519,9 +533,12 @@ src/
 - [x] Migrate load_csv to use DataSource
 - [x] Add DataSource to PlotOxide struct (backward compatible)
 - [x] Add compatibility methods for Vec<Vec<f64>> access
-- [ ] Replace manual stats with polars expressions
-- [ ] Update downsampling to use polars operations
+- [x] Optimize row-major conversion methods (O(n*m²) → O(n*m))
+- [x] Create polars-based statistics module (src/data/stats.rs)
+- [x] Add statistics methods to DataSource
+- [x] Analyze downsampling (LTTB is optimal as-is)
 - [ ] Test with CSV and Parquet files
+- [ ] Gradually migrate to use stats module
 - [ ] Remove legacy Vec<Vec<f64>> fields
 - [ ] Remove csv crate dependency
 
