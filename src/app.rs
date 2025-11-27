@@ -81,14 +81,27 @@ impl PlotOxide {
         colors[index % colors.len()]
     }
 
+    /// Parse a value from string, detecting dates/times and converting to Unix timestamp with millisecond precision
+    /// Returns (f64 value, is_timestamp, parse_info)
     pub fn parse_value(s: &str) -> (f64, bool) {
+        let trimmed = s.trim();
+
         // Try to parse as number first
-        if let Ok(num) = s.parse::<f64>() {
+        if let Ok(num) = trimmed.parse::<f64>() {
+            // Check if this looks like a Unix timestamp (seconds since epoch)
+            // Valid range: 1970-01-01 (0) to 2106-02-07 (4294967295)
+            // For millisecond timestamps: multiply by 1000
+            if num >= 946684800.0 && num <= 2147483647.0 {
+                // Likely Unix timestamp in seconds (2000-01-01 to 2038-01-19)
+                return (num, true);
+            } else if num >= 946684800000.0 && num <= 2147483647000.0 {
+                // Likely Unix timestamp in milliseconds - convert to seconds with decimal
+                return (num / 1000.0, true);
+            }
             return (num, false);
         }
 
-        // Try compact Unix timestamp format: YYYYMMDD HHMMSS
-        let trimmed = s.trim();
+        // Try compact format: YYYYMMDD HHMMSS
         if trimmed.len() >= 15 && trimmed.chars().all(|c| c.is_ascii_digit() || c.is_ascii_whitespace()) {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
             if parts.len() == 2 && parts[0].len() == 8 && parts[1].len() == 6 {
@@ -105,47 +118,84 @@ impl PlotOxide {
             }
         }
 
-        // Try common date/time formats and convert to Unix timestamp
-        let date_formats = [
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d %H:%M",
-            "%Y-%m-%d",
-            "%d/%m/%Y %H:%M:%S",
-            "%d/%m/%Y",
-            "%m/%d/%Y",
-            "%Y/%m/%d",
+        // Try ISO 8601 formats with 'T' separator (most common for logs/APIs)
+        let iso_formats = [
+            "%Y-%m-%dT%H:%M:%S%.fZ",      // 2024-01-15T14:30:00.123Z
+            "%Y-%m-%dT%H:%M:%SZ",         // 2024-01-15T14:30:00Z
+            "%Y-%m-%dT%H:%M:%S%.f",       // 2024-01-15T14:30:00.123
+            "%Y-%m-%dT%H:%M:%S",          // 2024-01-15T14:30:00
+            "%Y-%m-%dT%H:%M",             // 2024-01-15T14:30
         ];
 
-        for format in &date_formats {
-            if let Ok(dt) = NaiveDateTime::parse_from_str(s, format) {
-                return (dt.and_utc().timestamp() as f64, true);
+        for format in &iso_formats {
+            if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, format) {
+                // Preserve millisecond precision by using timestamp_millis
+                let timestamp_ms = dt.and_utc().timestamp_millis() as f64;
+                return (timestamp_ms / 1000.0, true);
             }
         }
 
-        (0.0, false) // Default if parsing fails
+        // Try common date/time formats
+        let common_formats = [
+            "%Y-%m-%d %H:%M:%S%.f",       // 2024-01-15 14:30:00.123
+            "%Y-%m-%d %H:%M:%S",          // 2024-01-15 14:30:00
+            "%Y-%m-%d %H:%M",             // 2024-01-15 14:30
+            "%Y-%m-%d",                   // 2024-01-15
+            "%Y/%m/%d %H:%M:%S",          // 2024/01/15 14:30:00
+            "%Y/%m/%d",                   // 2024/01/15
+            "%d/%m/%Y %H:%M:%S",          // 15/01/2024 14:30:00
+            "%d/%m/%Y",                   // 15/01/2024
+            "%m/%d/%Y %H:%M:%S",          // 01/15/2024 14:30:00
+            "%m/%d/%Y",                   // 01/15/2024
+            "%d-%m-%Y %H:%M:%S",          // 15-01-2024 14:30:00
+            "%d-%m-%Y",                   // 15-01-2024
+            "%b %d, %Y %H:%M:%S",         // Jan 15, 2024 14:30:00
+            "%b %d, %Y",                  // Jan 15, 2024
+            "%d %b %Y %H:%M:%S",          // 15 Jan 2024 14:30:00
+            "%d %b %Y",                   // 15 Jan 2024
+        ];
+
+        for format in &common_formats {
+            if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, format) {
+                let timestamp_ms = dt.and_utc().timestamp_millis() as f64;
+                return (timestamp_ms / 1000.0, true);
+            }
+        }
+
+        // Return NaN instead of 0.0 for failed parsing to distinguish from actual 0.0 values
+        (f64::NAN, false)
     }
 
+    /// Detect if a column contains timestamp data
+    /// Returns true if >75% of sampled values parse as timestamps
     pub fn is_column_timestamp(&self, col_index: usize) -> bool {
         let raw_data = self.raw_data();
         if raw_data.is_empty() || col_index >= raw_data[0].len() {
             return false;
         }
 
-        // Check first few rows to see if this column contains dates
-        let sample_size = raw_data.len().min(10);
+        // Use larger sample size for more reliable detection (up to 100 rows)
+        let sample_size = raw_data.len().min(100);
         let mut timestamp_count = 0;
+        let mut valid_values = 0;
 
         for row in raw_data.iter().take(sample_size) {
             if col_index < row.len() {
-                let (_, is_timestamp) = Self::parse_value(&row[col_index]);
+                let val = &row[col_index];
+                // Skip empty values
+                if val.trim().is_empty() {
+                    continue;
+                }
+                valid_values += 1;
+                let (_, is_timestamp) = Self::parse_value(val);
                 if is_timestamp {
                     timestamp_count += 1;
                 }
             }
         }
 
-        // If more than half of sampled values are timestamps, consider the column as timestamp
-        timestamp_count > sample_size / 2
+        // Need at least 5 valid values and 75% must be timestamps for high confidence
+        valid_values >= 5 && timestamp_count as f64 / valid_values as f64 > 0.75
     }
 
     // Check if a data point passes all active filters
@@ -202,8 +252,38 @@ impl PlotOxide {
         // Use new DataSource for loading
         let data_source = data::DataSource::load(&path)?;
 
+        // Extract data for validation (using DataSource methods)
+        let headers = data_source.column_names();
+        let data = data_source.as_row_major_f64();
+
+        // Validate parsed data and report issues
+        let mut nan_counts = vec![0usize; headers.len()];
+        let total_rows = data.len();
+
+        for row in &data {
+            for (col_idx, &value) in row.iter().enumerate() {
+                if value.is_nan() {
+                    nan_counts[col_idx] += 1;
+                }
+            }
+        }
+
+        // Report parsing warnings for columns with significant NaN values
+        let mut warnings = Vec::new();
+        for (col_idx, &nan_count) in nan_counts.iter().enumerate() {
+            if nan_count > 0 && col_idx < headers.len() {
+                let pct = (nan_count as f64 / total_rows as f64) * 100.0;
+                if pct > 5.0 {  // Warn if >5% of values failed to parse
+                    warnings.push(format!(
+                        "Column '{}': {}/{} values ({:.1}%) failed to parse",
+                        headers[col_idx], nan_count, total_rows, pct
+                    ));
+                }
+            }
+        }
+
         // Store data source
-        let num_cols = data_source.column_names().len();
+        let num_cols = headers.len();
         self.state.data = Some(data_source);
         self.state.view.x_index = 0;
         self.state.view.y_indices = if num_cols > 1 { vec![1] } else { vec![] };
@@ -225,6 +305,15 @@ impl PlotOxide {
 
         // Detect if X column is timestamp
         self.state.view.x_is_timestamp = self.is_column_timestamp(self.state.view.x_index);
+
+        // Show warnings if any parsing issues detected
+        if !warnings.is_empty() {
+            let warning_msg = format!(
+                "⚠ Data parsing warnings:\n{}",
+                warnings.join("\n")
+            );
+            self.state.ui.set_error(warning_msg);
+        }
 
         // Invalidate caches
         self.state.outlier_stats_cache.clear();
