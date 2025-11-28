@@ -1,5 +1,7 @@
 use polars::prelude::*;
 use std::path::{Path, PathBuf};
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 /// Errors that can occur during data operations
 #[derive(Debug)]
@@ -43,6 +45,8 @@ pub struct DataSource {
     materialized: DataFrame,
     /// Original file path
     file_path: Option<PathBuf>,
+    /// Cache for numeric column conversions
+    numeric_cache: RefCell<HashMap<usize, Vec<f64>>>,
 }
 
 impl DataSource {
@@ -69,6 +73,7 @@ impl DataSource {
             df,
             materialized,
             file_path: Some(path.to_path_buf()),
+            numeric_cache: RefCell::new(HashMap::new()),
         })
     }
 
@@ -113,13 +118,32 @@ impl DataSource {
     pub fn apply_filters(&mut self, filters: impl Fn() -> Expr) -> Result<(), DataError> {
         let filter_expr = filters();
         self.materialized = self.df.clone().filter(filter_expr).collect()?;
+        // Clear cache when filters change
+        self.numeric_cache.borrow_mut().clear();
         Ok(())
     }
 
     /// Re-materialize the DataFrame (useful after lazy operations)
     pub fn refresh(&mut self) -> Result<(), DataError> {
         self.materialized = self.df.clone().collect()?;
+        // Clear cache when refreshed
+        self.numeric_cache.borrow_mut().clear();
         Ok(())
+    }
+
+    /// Get cached numeric column, computing if necessary
+    pub fn get_cached_column(&self, col_idx: usize) -> Result<std::cell::Ref<Vec<f64>>, DataError> {
+        // Check if already cached
+        if !self.numeric_cache.borrow().contains_key(&col_idx) {
+            // Compute
+            let data = self.column_as_f64(col_idx)?;
+            self.numeric_cache.borrow_mut().insert(col_idx, data);
+        }
+        
+        // Return reference into RefCell
+        Ok(std::cell::Ref::map(self.numeric_cache.borrow(), |cache| {
+            cache.get(&col_idx).expect("Just inserted")
+        }))
     }
 
     /// Get a column's numeric values as Vec<f64>

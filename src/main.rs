@@ -185,13 +185,13 @@ impl App for PlotOxide {
                         ui.add_space(10.0);
                         ui.label("A high-performance data visualization tool.");
                         ui.add_space(20.0);
-                        if ui.button("📂 Open CSV File").clicked() {
+                        if ui.button("📂 Open Data File").clicked() {
                             // Trigger file dialog
                             if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("CSV Files", &["csv"])
+                                .add_filter("Data Files", &["csv", "parquet"])
                                 .pick_file()
                             {
-                                if let Err(e) = self.load_csv(path) {
+                                if let Err(e) = self.load_file(path) {
                                     self.state.ui.set_error(e.user_message());
                                 }
                             }
@@ -267,7 +267,7 @@ impl App for PlotOxide {
              ctx.input(|i| {
                 if let Some(dropped) = i.raw.dropped_files.first() {
                     if let Some(path) = &dropped.path {
-                        if let Err(e) = self.load_csv(path.clone()) {
+                        if let Err(e) = self.load_file(path.clone()) {
                             self.state.ui.set_error(e.user_message());
                         }
                     }

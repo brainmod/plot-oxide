@@ -5,42 +5,78 @@ use egui_plot::{Bar, BarChart, BoxElem, BoxPlot, BoxSpread, HLine, Line, Plot, P
 
 /// Render the main plot area
 pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut eframe::egui::Ui) {
-    // ... (rest of the file remains unchanged)
-    // Get data from DataSource
-    let data = app.data();
+    // Get data source directly to avoid materializing row-major data
+    let ds = if let Some(ds) = &app.state.data {
+        ds
+    } else {
+        return;
+    };
     let headers = app.headers();
 
+    // Helper to get column data safely (clones data for compatibility with non-optimized plot modes)
+    let get_col_data = |col_idx: usize| -> Vec<f64> {
+        ds.get_cached_column(col_idx)
+            .map(|r| r.to_vec())
+            .unwrap_or_default()
+    };
+
     // Pre-calculate statistics for outlier filtering (performance optimization)
+    // We need to ensure cache is populated before borrowing multiple times
+    let needed_cols: Vec<usize> = std::iter::once(app.state.view.x_index)
+        .chain(app.state.view.y_indices.iter().copied())
+        .collect();
+    
+    for col in &needed_cols {
+        let _ = ds.get_cached_column(*col); 
+    }
+
     if app.state.filters.filter_outliers {
         app.state.outlier_stats_cache.clear();
         for &y_idx in &app.state.view.y_indices {
-            let y_values: Vec<f64> = data.iter().map(|row| row[y_idx]).collect();
-            let stats = PlotOxide::calculate_statistics(&y_values);
-            app.state.outlier_stats_cache.insert(y_idx, stats);
+            if let Ok(y_ref) = ds.get_cached_column(y_idx) {
+                let stats = PlotOxide::calculate_statistics(&y_ref);
+                app.state.outlier_stats_cache.insert(y_idx, stats);
+            }
         }
     }
 
     // Create data for all series with filtering
     let all_series: Vec<Vec<[f64; 2]>> = app.state.view.y_indices.iter()
         .map(|&y_idx| {
-            let points: Vec<[f64; 2]> = data.iter()
-                .enumerate()
-                .filter_map(|(row_idx, row)| {
-                    let x_val = if app.state.view.use_row_index {
-                        row_idx as f64
-                    } else {
-                        row[app.state.view.x_index]
-                    };
-                    let y_val = row[y_idx];
+            let y_ref = match ds.get_cached_column(y_idx) {
+                Ok(r) => r,
+                Err(_) => return Vec::new(),
+            };
 
-                    // Apply filters
-                    if app.passes_filters(row_idx, x_val, y_val, y_idx) {
-                        Some([x_val, y_val])
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            // Prepare points using iterators to avoid allocating intermediate X/Y vectors
+            let points: Vec<[f64; 2]> = if app.state.view.use_row_index {
+                let x_iter = (0..ds.height()).map(|i| i as f64);
+                x_iter.zip(y_ref.iter())
+                    .enumerate()
+                    .filter_map(|(row_idx, (x_val, &y_val))| {
+                        if app.passes_filters(row_idx, x_val, y_val, y_idx) {
+                            Some([x_val, y_val])
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                if let Ok(x_ref) = ds.get_cached_column(app.state.view.x_index) {
+                    x_ref.iter().zip(y_ref.iter())
+                        .enumerate()
+                        .filter_map(|(row_idx, (&x_val, &y_val))| {
+                            if app.passes_filters(row_idx, x_val, y_val, y_idx) {
+                                Some([x_val, y_val])
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            };
 
             // Downsample if dataset is large
             if points.len() > app.state.view.downsample_threshold {
@@ -392,9 +428,9 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                         let color = PlotOxide::get_series_color(series_idx);
                         let name = &headers[y_idx];
 
-                        // Get Y values directly from data (not from all_series which has X,Y pairs)
-                        let y_values: Vec<f64> = data.iter()
-                            .map(|row| row[y_idx])
+                        // Get Y values directly from data (column-wise)
+                        let y_values: Vec<f64> = get_col_data(y_idx)
+                            .into_iter()
                             .filter(|&v| !v.is_nan() && v.is_finite())
                             .collect();
 
@@ -421,6 +457,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                 }
                 PlotMode::BoxPlot => {
                     // Box plot mode - only show box plots
+                    // We use all_series here because it already contains the filtered/processed points for the plot
                     for (series_idx, (&y_idx, points_data)) in app.state.view.y_indices.iter().zip(&all_series).enumerate() {
                         let color = PlotOxide::get_series_color(series_idx);
                         let name = &headers[y_idx];
@@ -443,9 +480,9 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                         let color = PlotOxide::get_series_color(series_idx);
                         let name = &headers[y_idx];
 
-                        // Get Y values directly from data
-                        let y_values: Vec<f64> = data.iter()
-                            .map(|row| row[y_idx])
+                        // Get Y values directly from data (column-wise)
+                        let y_values: Vec<f64> = get_col_data(y_idx)
+                            .into_iter()
                             .filter(|&v| !v.is_nan() && v.is_finite())
                             .collect();
 
@@ -502,9 +539,9 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                         let color = PlotOxide::get_series_color(0);
                         let name = &headers[y_idx];
 
-                        // Get Y values directly from data
-                        let y_values: Vec<f64> = data.iter()
-                            .map(|row| row[y_idx])
+                        // Get Y values directly from data (column-wise)
+                        let y_values: Vec<f64> = get_col_data(y_idx)
+                            .into_iter()
                             .filter(|&v| !v.is_nan() && v.is_finite())
                             .collect();
 
@@ -574,9 +611,9 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                         let color = PlotOxide::get_series_color(0);
                         let name = &headers[y_idx];
 
-                        // Get Y values (number of defects per sample)
-                        let defects: Vec<f64> = data.iter()
-                            .map(|row| row[y_idx])
+                        // Get Y values (number of defects per sample) (column-wise)
+                        let defects: Vec<f64> = get_col_data(y_idx)
+                            .into_iter()
                             .filter(|&v| !v.is_nan() && v.is_finite())
                             .collect();
 
@@ -624,7 +661,8 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
 
     if app.state.spc.show_outliers || app.state.spc.show_spc_limits || app.state.spc.show_we_rules {
         for series_idx in 0..app.state.view.y_indices.len() {
-            let y_values: Vec<f64> = all_series[series_idx].iter().map(|p| p[1]).collect();
+            // Use column data directly
+            let y_values: Vec<f64> = get_col_data(app.state.view.y_indices[series_idx]);
 
             if app.state.spc.show_outliers {
                 let outliers = PlotOxide::detect_outliers(&y_values, app.state.spc.outlier_threshold);
