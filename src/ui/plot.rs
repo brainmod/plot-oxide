@@ -92,15 +92,10 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
     let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
     let alt_held = ctx.input(|i| i.modifiers.alt);
 
-    // Calculate plot height with minimum constraints to ensure axis labels render properly
+    // Calculate plot height to fill available space
     let available_height = ui.available_height();
-    let plot_height = if available_height > 600.0 {
-        // Cap maximum height to prevent axis label rendering issues
-        available_height.min(800.0)
-    } else {
-        // Use available height but ensure minimum for proper axis rendering
-        available_height.max(200.0)
-    };
+    // Ensure a minimum height for usability, but otherwise fill the space
+    let plot_height = available_height.max(200.0);
 
     let mut plot = Plot::new("plot")
         .allow_zoom(app.state.view.allow_zoom)

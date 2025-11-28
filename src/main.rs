@@ -50,29 +50,32 @@ impl App for PlotOxide {
         // 1. Slim Icon Strip (Far Left)
         SidePanel::left("icon_strip")
             .resizable(false)
-            .exact_width(45.0)
+            .exact_width(50.0)
             .show(ctx, |ui| {
-                ui.add_space(8.0);
-                
-                // Helper closure to create consistent toggle buttons
-                let mut toggle_btn = |icon: &str, panel: ActivePanel, tooltip: &str| {
-                    let is_active = self.state.ui.active_panel == panel;
-                    let btn = egui::Button::new(egui::RichText::new(icon).size(20.0))
-                        .frame(false)
-                        .min_size(egui::vec2(40.0, 40.0))
-                        .selected(is_active);
-                    
-                    if ui.add(btn).on_hover_text(tooltip).clicked() {
-                        self.state.ui.toggle_panel(panel);
-                    }
-                    ui.add_space(4.0);
-                };
+                // Top Icons (Primary Panels)
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.add_space(8.0);
 
-                // Primary Tool Icons
-                toggle_btn("📂", ActivePanel::Controls, "Controls & Files");
-                toggle_btn("📈", ActivePanel::Series, "Series Selection");
-                toggle_btn("📋", ActivePanel::Table, "Data Table");
-                toggle_btn("∑", ActivePanel::Stats, "Statistics");
+                    // Helper closure to create consistent toggle buttons
+                    let mut toggle_btn = |icon: &str, panel: ActivePanel, tooltip: &str| {
+                        let is_active = self.state.ui.active_panel == panel;
+                        let btn = egui::Button::new(egui::RichText::new(icon).size(20.0))
+                            .frame(false)
+                            .min_size(egui::vec2(40.0, 40.0))
+                            .selected(is_active);
+                        
+                        if ui.add(btn).on_hover_text(tooltip).clicked() {
+                            self.state.ui.toggle_panel(panel);
+                        }
+                        ui.add_space(4.0);
+                    };
+
+                    // Primary Tool Icons
+                    toggle_btn("📂", ActivePanel::Controls, "Controls & Files");
+                    toggle_btn("📈", ActivePanel::Series, "Series Selection");
+                    toggle_btn("📋", ActivePanel::Table, "Data Table");
+                    toggle_btn("∑", ActivePanel::Stats, "Statistics");
+                });
 
                 // Bottom Icons (Global Toggles)
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
@@ -120,7 +123,9 @@ impl App for PlotOxide {
                         
                         // Close button aligned to right
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("✖").clicked() {
+                            let close_btn = egui::Button::new(egui::RichText::new("✖").size(16.0).strong())
+                                .frame(false);
+                            if ui.add(close_btn).on_hover_text("Close Panel").clicked() {
                                 self.state.ui.active_panel = ActivePanel::None;
                             }
                         });
