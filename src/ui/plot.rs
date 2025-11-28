@@ -149,12 +149,25 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
     }
 
     let plot_response = plot.show(ui, |plot_ui| {
+        puffin::profile_scope!("plot_show");
+
+        // Get plot bounds for culling
+        let bounds = plot_ui.plot_bounds();
+        let x_min = bounds.min()[0];
+        let x_max = bounds.max()[0];
+
         match app.state.view.plot_mode {
             PlotMode::Scatter => {
                 // Plot each series in scatter mode
                 for (series_idx, (&y_idx, points_data)) in app.state.view.y_indices.iter().zip(&all_series).enumerate() {
+                    puffin::profile_scope!("render_series");
+
                     let color = PlotOxide::get_series_color(series_idx);
                     let name = &headers[y_idx];
+
+                    // Cull points to visible range (significant performance improvement for large datasets)
+                    let (start, end) = PlotOxide::cull_to_visible_range(points_data, x_min, x_max);
+                    let visible_points = &points_data[start..end];
 
             // Draw sigma zone lines if enabled
             if app.state.spc.show_sigma_zones && !points_data.is_empty() {
@@ -240,17 +253,17 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                 );
             }
 
-            // Draw data series
+            // Draw data series (using culled visible points for performance)
             match app.state.view.line_style {
                 LineStyle::Line => {
-                    plot_ui.line(Line::new(name, points_data.clone()).color(color));
+                    plot_ui.line(Line::new(name, visible_points.to_vec()).color(color));
                 }
                 LineStyle::Points => {
-                    plot_ui.points(Points::new(name, points_data.clone()).radius(3.0).color(color));
+                    plot_ui.points(Points::new(name, visible_points.to_vec()).radius(3.0).color(color));
                 }
                 LineStyle::LineAndPoints => {
-                    plot_ui.line(Line::new(name, points_data.clone()).color(color));
-                    plot_ui.points(Points::new(name, points_data.clone()).radius(3.0).color(color));
+                    plot_ui.line(Line::new(name, visible_points.to_vec()).color(color));
+                    plot_ui.points(Points::new(name, visible_points.to_vec()).radius(3.0).color(color));
                 }
             }
 

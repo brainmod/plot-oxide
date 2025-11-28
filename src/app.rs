@@ -478,7 +478,37 @@ impl PlotOxide {
         result
     }
 
+    /// Cull points to visible range using binary search (assumes x-sorted data)
+    /// Returns indices into the original data that are visible
+    pub fn cull_to_visible_range(data: &[[f64; 2]], x_min: f64, x_max: f64) -> (usize, usize) {
+        puffin::profile_function!();
+
+        if data.is_empty() {
+            return (0, 0);
+        }
+
+        // Add small margin (1%) for line continuity at edges
+        let range = x_max - x_min;
+        let margin = range * 0.01;
+        let search_min = x_min - margin;
+        let search_max = x_max + margin;
+
+        // Binary search for start index
+        let start = data.partition_point(|p| p[0] < search_min);
+
+        // Binary search for end index (from start position)
+        let end = start + data[start..].partition_point(|p| p[0] <= search_max);
+
+        // Ensure we include at least one point on each side if available
+        let start = start.saturating_sub(1);
+        let end = (end + 1).min(data.len());
+
+        (start, end)
+    }
+
     pub fn downsample_lttb(data: &[[f64; 2]], threshold: usize) -> Vec<[f64; 2]> {
+        puffin::profile_function!();
+
         // Largest-Triangle-Three-Buckets algorithm
         if data.len() <= threshold || threshold < 3 {
             return data.to_vec();
