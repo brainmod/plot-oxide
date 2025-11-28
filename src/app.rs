@@ -314,6 +314,7 @@ impl PlotOxide {
 
         // Invalidate caches
         self.state.outlier_stats_cache.clear();
+        self.state.lttb_cache.invalidate();
 
         Ok(())
     }

@@ -50,24 +50,97 @@ pub struct DataSource {
 }
 
 impl DataSource {
-    /// Load data from a file (CSV or Parquet)
-    pub fn load(path: &Path) -> Result<Self, DataError> {
+    /// Load data from a file with optional column projection and filtering (optimized)
+    /// If columns is None, all columns are loaded
+    /// If filter_expr is None, no filtering is applied
+    pub fn load_optimized(
+        path: &Path,
+        columns: Option<Vec<String>>,
+        filter_expr: Option<Expr>,
+    ) -> Result<Self, DataError> {
+        puffin::profile_function!();
+
         let extension = path
             .extension()
             .and_then(|s| s.to_str())
             .ok_or_else(|| DataError::UnsupportedFormat("No file extension".to_string()))?;
 
-        let df = match extension.to_lowercase().as_str() {
-            "parquet" => LazyFrame::scan_parquet(path, Default::default())?,
-            "csv" => LazyCsvReader::new(path)
-                .with_has_header(true)
-                .with_infer_schema_length(Some(100))
-                .with_try_parse_dates(true)  // Enable automatic date parsing
-                .finish()?,
-            ext => return Err(DataError::UnsupportedFormat(ext.to_string())),
+        let mut df = {
+            puffin::profile_scope!("scan_file");
+            match extension.to_lowercase().as_str() {
+                "parquet" => {
+                    LazyFrame::scan_parquet(path, ScanArgsParquet {
+                        low_memory: true,
+                        parallel: ParallelStrategy::Auto,
+                        ..Default::default()
+                    })?
+                }
+                "csv" => LazyCsvReader::new(path)
+                    .with_has_header(true)
+                    .with_infer_schema_length(Some(100))
+                    .with_try_parse_dates(true)
+                    .finish()?,
+                ext => return Err(DataError::UnsupportedFormat(ext.to_string())),
+            }
         };
 
-        let materialized = df.clone().collect()?;
+        // Apply column projection (select only needed columns)
+        if let Some(cols) = columns {
+            puffin::profile_scope!("column_projection");
+            df = df.select(&cols.iter().map(|s| col(s)).collect::<Vec<_>>());
+        }
+
+        // Apply predicate pushdown (filter at scan time)
+        if let Some(filter) = filter_expr {
+            puffin::profile_scope!("predicate_pushdown");
+            df = df.filter(filter);
+        }
+
+        let materialized = {
+            puffin::profile_scope!("collect");
+            df.clone().collect()?
+        };
+
+        Ok(Self {
+            df,
+            materialized,
+            file_path: Some(path.to_path_buf()),
+            numeric_cache: RefCell::new(HashMap::new()),
+        })
+    }
+
+    /// Load data from a file (CSV or Parquet)
+    pub fn load(path: &Path) -> Result<Self, DataError> {
+        puffin::profile_function!();
+
+        let extension = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| DataError::UnsupportedFormat("No file extension".to_string()))?;
+
+        let df = {
+            puffin::profile_scope!("scan_file");
+            match extension.to_lowercase().as_str() {
+                "parquet" => {
+                    LazyFrame::scan_parquet(path, ScanArgsParquet {
+                        low_memory: true,
+                        parallel: ParallelStrategy::Auto,
+                        ..Default::default()
+                    })?
+                }
+                "csv" => LazyCsvReader::new(path)
+                    .with_has_header(true)
+                    .with_infer_schema_length(Some(100))
+                    .with_try_parse_dates(true)  // Enable automatic date parsing
+                    .finish()?,
+                ext => return Err(DataError::UnsupportedFormat(ext.to_string())),
+            }
+        };
+
+        let materialized = {
+            puffin::profile_scope!("collect");
+            df.clone().collect()?
+        };
 
         Ok(Self {
             df,

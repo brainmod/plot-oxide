@@ -14,11 +14,11 @@ pub use filters::FilterConfig;
 pub use ui::{UiState, ActivePanel}; // Re-export ActivePanel
 
 use crate::data::DataSource;
+use crate::lttb_cache::LttbCache;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Main application state container
-#[derive(Default)]
 pub struct AppState {
     /// Current data source (CSV or Parquet)
     pub data: Option<DataSource>,
@@ -43,6 +43,25 @@ pub struct AppState {
 
     /// Performance cache for outlier statistics (column_idx -> (mean, std_dev))
     pub outlier_stats_cache: HashMap<usize, (f64, f64)>,
+
+    /// LTTB downsampling cache with zoom-level quantization
+    pub lttb_cache: LttbCache,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            data: None,
+            view: ViewState::default(),
+            spc: SpcConfig::default(),
+            filters: FilterConfig::default(),
+            ui: UiState::default(),
+            current_file: None,
+            recent_files: Vec::new(),
+            outlier_stats_cache: HashMap::new(),
+            lttb_cache: LttbCache::default(),
+        }
+    }
 }
 
 impl AppState {

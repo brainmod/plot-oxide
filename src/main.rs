@@ -8,6 +8,8 @@ mod app;
 mod constants;
 mod data;
 mod error;
+mod lttb_cache;
+mod perf;
 mod state;
 mod widgets;
 mod ui;
@@ -18,6 +20,9 @@ use state::ActivePanel;
 
 impl App for PlotOxide {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        puffin::profile_function!();
+        puffin::GlobalProfiler::lock().new_frame();
+
         // Set theme
         if self.state.view.dark_mode {
             ctx.set_visuals(egui::Visuals::dark());
@@ -283,13 +288,16 @@ impl App for PlotOxide {
 }
 
 fn main() {
+    // Enable puffin profiler
+    puffin::set_scopes_on(true);
+
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
             .with_drag_and_drop(true),
         ..Default::default()
     };
-    
+
     eframe::run_native(
         "PlotOxide - Advanced Data Plotter",
         options,

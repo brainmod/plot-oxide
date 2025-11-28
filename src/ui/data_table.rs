@@ -61,12 +61,15 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
                     });
                 }
             })
-            .body(|mut body| {
+            .body(|body| {
+                puffin::profile_scope!("table_body");
+
                 // Calculate row indices (filtering and sorting)
                 let mut row_indices: Vec<usize> = (0..raw_data.len()).collect();
 
                 // Apply filter
                 if !app.state.ui.row_filter.is_empty() {
+                    puffin::profile_scope!("filter_rows");
                     let filter_lower = app.state.ui.row_filter.to_lowercase();
                     row_indices.retain(|&idx| {
                         raw_data[idx].iter().any(|cell| cell.to_lowercase().contains(&filter_lower))
@@ -75,6 +78,7 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
 
                 // Apply sort
                 if let Some(sort_col) = app.state.ui.sort_column {
+                    puffin::profile_scope!("sort_rows");
                     row_indices.sort_by(|&a, &b| {
                         let val_a = &data[a][sort_col];
                         let val_b = &data[b][sort_col];
@@ -86,45 +90,51 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
                     });
                 }
 
-                for &row_idx in &row_indices {
+                let total_rows = row_indices.len();
+
+                // CRITICAL: Use .rows() for virtual scrolling - only renders visible rows!
+                body.rows(18.0, total_rows, |mut row| {
+                    puffin::profile_scope!("render_row");
+
+                    let visible_idx = row.index();
+                    let row_idx = row_indices[visible_idx];
                     let row_data = &raw_data[row_idx];
+
                     let is_hovered = app.state.view.hovered_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
                     let is_selected = app.state.view.selected_point.map(|(_, pi)| pi == row_idx).unwrap_or(false);
                     let is_excursion = app.state.spc.excursion_rows.contains(&row_idx);
 
-                    body.row(18.0, |mut row_ui| {
-                        if is_selected || is_hovered {
-                            row_ui.set_selected(true);
-                        }
+                    if is_selected || is_hovered {
+                        row.set_selected(true);
+                    }
 
-                        row_ui.col(|ui| {
-                            if is_excursion {
-                                ui.colored_label(eframe::egui::Color32::RED, format!("⚠ {}", row_idx + 1));
-                            } else {
-                                ui.label(format!("{}", row_idx + 1));
-                            }
-                        });
-
-                        for &col_idx in &display_cols {
-                            let cell = &row_data[col_idx];
-                            row_ui.col(|ui| {
-                                // Highlight X column or Y series
-                                if col_idx == app.state.view.x_index {
-                                    ui.strong(cell);
-                                } else if app.state.view.y_indices.contains(&col_idx) {
-                                    ui.strong(cell);
-                                } else {
-                                    ui.label(cell);
-                                }
-                            });
-                        }
-
-                        // Detect if this row is hovered (after all columns)
-                        if row_ui.response().hovered() {
-                            app.state.view.table_hovered_row = Some(row_idx);
+                    row.col(|ui| {
+                        if is_excursion {
+                            ui.colored_label(eframe::egui::Color32::RED, format!("⚠ {}", row_idx + 1));
+                        } else {
+                            ui.label(format!("{}", row_idx + 1));
                         }
                     });
-                }
+
+                    for &col_idx in &display_cols {
+                        let cell = &row_data[col_idx];
+                        row.col(|ui| {
+                            // Highlight X column or Y series
+                            if col_idx == app.state.view.x_index {
+                                ui.strong(cell);
+                            } else if app.state.view.y_indices.contains(&col_idx) {
+                                ui.strong(cell);
+                            } else {
+                                ui.label(cell);
+                            }
+                        });
+                    }
+
+                    // Detect if this row is hovered (after all columns)
+                    if row.response().hovered() {
+                        app.state.view.table_hovered_row = Some(row_idx);
+                    }
+                });
             });
     });
 }
