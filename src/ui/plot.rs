@@ -149,6 +149,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
     }
 
     let plot_response = plot.show(ui, |plot_ui| {
+        #[cfg(feature = "profiling")]
         puffin::profile_scope!("plot_show");
 
         // Get plot bounds for culling
@@ -160,6 +161,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
             PlotMode::Scatter => {
                 // Plot each series in scatter mode
                 for (series_idx, (&y_idx, points_data)) in app.state.view.y_indices.iter().zip(&all_series).enumerate() {
+                    #[cfg(feature = "profiling")]
                     puffin::profile_scope!("render_series");
 
                     let color = PlotOxide::get_series_color(series_idx);

@@ -15,19 +15,21 @@ macro_rules! timed {
 }
 
 /// Profile a function scope using puffin
-/// Only active when profiling is enabled
+/// Only active when profiling feature is enabled
 #[macro_export]
 macro_rules! profile_scope {
     ($name:expr) => {
+        #[cfg(feature = "profiling")]
         puffin::profile_scope!($name);
     };
 }
 
 /// Profile a function using puffin
-/// Only active when profiling is enabled
+/// Only active when profiling feature is enabled
 #[macro_export]
 macro_rules! profile_function {
     () => {
+        #[cfg(feature = "profiling")]
         puffin::profile_function!();
     };
 }

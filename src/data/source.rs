@@ -58,6 +58,7 @@ impl DataSource {
         columns: Option<Vec<String>>,
         filter_expr: Option<Expr>,
     ) -> Result<Self, DataError> {
+        #[cfg(feature = "profiling")]
         puffin::profile_function!();
 
         let extension = path
@@ -111,6 +112,7 @@ impl DataSource {
 
     /// Load data from a file (CSV or Parquet)
     pub fn load(path: &Path) -> Result<Self, DataError> {
+        #[cfg(feature = "profiling")]
         puffin::profile_function!();
 
         let extension = path

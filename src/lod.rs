@@ -62,7 +62,8 @@ pub fn generate_lod_tiers(
     x_column: &str,
     y_column: &str,
 ) -> Result<Vec<PathBuf>, DataError> {
-    puffin::profile_function!();
+    #[cfg(feature = "profiling")]
+        puffin::profile_function!();
 
     // Load raw data
     let raw_df = {

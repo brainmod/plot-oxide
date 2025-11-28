@@ -38,6 +38,7 @@ impl LttbCache {
     where
         F: FnOnce(&[(f64, f64)], usize) -> Vec<[f64; 2]>,
     {
+        #[cfg(feature = "profiling")]
         puffin::profile_function!();
 
         let range_width = visible_range.1 - visible_range.0;

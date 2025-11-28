@@ -62,6 +62,7 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
                 }
             })
             .body(|body| {
+                #[cfg(feature = "profiling")]
                 puffin::profile_scope!("table_body");
 
                 // Calculate row indices (filtering and sorting)
@@ -69,7 +70,8 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
 
                 // Apply filter
                 if !app.state.ui.row_filter.is_empty() {
-                    puffin::profile_scope!("filter_rows");
+                    #[cfg(feature = "profiling")]
+                puffin::profile_scope!("filter_rows");
                     let filter_lower = app.state.ui.row_filter.to_lowercase();
                     row_indices.retain(|&idx| {
                         raw_data[idx].iter().any(|cell| cell.to_lowercase().contains(&filter_lower))
@@ -78,7 +80,8 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
 
                 // Apply sort
                 if let Some(sort_col) = app.state.ui.sort_column {
-                    puffin::profile_scope!("sort_rows");
+                    #[cfg(feature = "profiling")]
+                puffin::profile_scope!("sort_rows");
                     row_indices.sort_by(|&a, &b| {
                         let val_a = &data[a][sort_col];
                         let val_b = &data[b][sort_col];
@@ -94,7 +97,8 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
 
                 // CRITICAL: Use .rows() for virtual scrolling - only renders visible rows!
                 body.rows(18.0, total_rows, |mut row| {
-                    puffin::profile_scope!("render_row");
+                    #[cfg(feature = "profiling")]
+                puffin::profile_scope!("render_row");
 
                     let visible_idx = row.index();
                     let row_idx = row_indices[visible_idx];

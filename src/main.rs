@@ -21,8 +21,11 @@ use state::ActivePanel;
 
 impl App for PlotOxide {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        puffin::profile_function!();
-        puffin::GlobalProfiler::lock().new_frame();
+        #[cfg(all(debug_assertions, feature = "profiling"))]
+        {
+            puffin::profile_function!();
+            puffin::GlobalProfiler::lock().new_frame();
+        }
 
         // Set theme
         if self.state.view.dark_mode {
@@ -289,7 +292,8 @@ impl App for PlotOxide {
 }
 
 fn main() {
-    // Enable puffin profiler
+    // Enable puffin profiler only in debug builds when profiling feature is enabled
+    #[cfg(all(debug_assertions, feature = "profiling"))]
     puffin::set_scopes_on(true);
 
     let options = eframe::NativeOptions {

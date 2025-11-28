@@ -481,6 +481,7 @@ impl PlotOxide {
     /// Cull points to visible range using binary search (assumes x-sorted data)
     /// Returns indices into the original data that are visible
     pub fn cull_to_visible_range(data: &[[f64; 2]], x_min: f64, x_max: f64) -> (usize, usize) {
+        #[cfg(feature = "profiling")]
         puffin::profile_function!();
 
         if data.is_empty() {
@@ -507,6 +508,7 @@ impl PlotOxide {
     }
 
     pub fn downsample_lttb(data: &[[f64; 2]], threshold: usize) -> Vec<[f64; 2]> {
+        #[cfg(feature = "profiling")]
         puffin::profile_function!();
 
         // Largest-Triangle-Three-Buckets algorithm
