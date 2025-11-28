@@ -208,6 +208,8 @@ impl App for PlotOxide {
                                 if let Err(e) = self.load_file(path) {
                                     self.state.ui.set_error(e.user_message());
                                 }
+                                // Force immediate repaint after loading data
+                                ctx.request_repaint();
                             }
                         }
                         ui.add_space(10.0);
@@ -284,6 +286,8 @@ impl App for PlotOxide {
                         if let Err(e) = self.load_file(path.clone()) {
                             self.state.ui.set_error(e.user_message());
                         }
+                        // Force immediate repaint after loading data
+                        ctx.request_repaint();
                     }
                 }
             });
