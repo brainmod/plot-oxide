@@ -1,8 +1,27 @@
 //! UI interaction state
 
-/// UI state manages table interaction and sorting
+/// Active panel in the Focus Mode layout
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivePanel {
+    None,
+    Controls, // Toolbar (Files, SPC, View settings)
+    Series,   // Y-Axis selection
+    Table,    // Data table
+    Stats,    // Statistics
+}
+
+impl Default for ActivePanel {
+    fn default() -> Self {
+        ActivePanel::Series // Open series selection by default
+    }
+}
+
+/// UI state manages table interaction, sorting, and layout
 #[derive(Debug, Clone, Default)]
 pub struct UiState {
+    /// Currently active side panel
+    pub active_panel: ActivePanel,
+
     /// Search/filter string for data table rows
     pub row_filter: String,
 
@@ -23,11 +42,21 @@ impl UiState {
     /// Create a new UiState with default values
     pub fn new() -> Self {
         Self {
+            active_panel: ActivePanel::default(),
             row_filter: String::new(),
             scroll_to_row: None,
             sort_column: None,
             sort_ascending: true,
             error_message: None,
+        }
+    }
+
+    /// Toggle a specific panel
+    pub fn toggle_panel(&mut self, panel: ActivePanel) {
+        if self.active_panel == panel {
+            self.active_panel = ActivePanel::None;
+        } else {
+            self.active_panel = panel;
         }
     }
 
@@ -59,9 +88,6 @@ impl UiState {
     }
 
     /// Toggle sort direction for a column
-    ///
-    /// If the column is already sorted, toggle the direction.
-    /// Otherwise, sort by this column in ascending order.
     pub fn toggle_sort(&mut self, column: usize) {
         if self.sort_column == Some(column) {
             self.sort_ascending = !self.sort_ascending;
@@ -81,12 +107,12 @@ impl UiState {
         self.scroll_to_row = Some(row);
     }
 
-    /// Clear scroll target (should be called after scrolling is complete)
+    /// Clear scroll target
     pub fn clear_scroll_target(&mut self) {
         self.scroll_to_row = None;
     }
 
-    /// Set an error message to display in the UI
+    /// Set an error message
     pub fn set_error(&mut self, message: impl Into<String>) {
         self.error_message = Some(message.into());
     }

@@ -9,12 +9,12 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
     // Compact toolbar with icon buttons
     ui.horizontal(|ui| {
         // File operations
-        if ui.button("📂").on_hover_text("Open CSV File").clicked() {
+        if ui.button("📂").on_hover_text("Open Data File").clicked() {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("CSV Files", &["csv"])
+                .add_filter("Data Files", &["csv", "parquet"])
                 .pick_file()
             {
-                if let Err(e) = app.load_csv(path) {
+                if let Err(e) = app.load_file(path) {
                     app.state.ui.set_error(e.user_message());
                 }
             }
@@ -32,7 +32,7 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
                         if let Some(name) = path.file_name() {
                             if ui.button(name.to_string_lossy()).clicked() {
                                 let path_clone = path.clone();
-                                if let Err(e) = app.load_csv(path_clone) {
+                                if let Err(e) = app.load_file(path_clone) {
                                     app.state.ui.set_error(e.user_message());
                                 }
                             }
@@ -57,7 +57,7 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
             .first()
             .and_then(|f| f.path.as_ref())
             .map(|path| {
-                if let Err(e) = app.load_csv(path.clone()) {
+                if let Err(e) = app.load_file(path.clone()) {
                     app.state.ui.set_error(e.user_message());
                 }
             });

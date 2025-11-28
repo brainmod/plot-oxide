@@ -1,6 +1,7 @@
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use polars::prelude::*;
 
 use crate::data;
 use crate::error::PlotError;
@@ -33,7 +34,7 @@ pub struct ViewConfig {
 }
 
 pub struct PlotOxide {
-    // Application state (Phase 2 refactoring)
+    // Application state
     pub state: state::AppState,
 }
 
@@ -176,15 +177,12 @@ impl PlotOxide {
     }
 
     // Check if a data point passes all active filters
-    pub fn passes_filters(&self, row_idx: usize, x_val: f64, y_val: f64, y_idx: usize) -> bool {
+    pub fn passes_filters(&self, _row_idx: usize, x_val: f64, y_val: f64, y_idx: usize) -> bool {
         // Check empty data filter (only for selected Y columns)
-        if self.state.filters.filter_empty && self.state.view.y_indices.contains(&y_idx) {
-            let raw_data = self.raw_data();
-            if row_idx < raw_data.len() && y_idx < raw_data[row_idx].len() {
-                let raw_val = &raw_data[row_idx][y_idx];
-                if raw_val.trim().is_empty() || raw_val == "NaN" || raw_val == "nan" {
-                    return false;
-                }
+        // Since we are dealing with f64 values here, "empty" or "invalid" is represented as NaN
+        if self.state.filters.filter_empty {
+            if y_val.is_nan() {
+                return false;
             }
         }
 
@@ -225,23 +223,22 @@ impl PlotOxide {
         true
     }
 
-    pub fn load_csv(&mut self, path: PathBuf) -> Result<(), PlotError> {
+    pub fn load_file(&mut self, path: PathBuf) -> Result<(), PlotError> {
         // Use new DataSource for loading
         let data_source = data::DataSource::load(&path)?;
 
         // Extract data for validation (using DataSource methods)
         let headers = data_source.column_names();
-        let data = data_source.as_row_major_f64();
-
+        let num_cols = headers.len();
+        let height = data_source.height();
+        
         // Validate parsed data and report issues
-        let mut nan_counts = vec![0usize; headers.len()];
-        let total_rows = data.len();
-
-        for row in &data {
-            for (col_idx, &value) in row.iter().enumerate() {
-                if value.is_nan() {
-                    nan_counts[col_idx] += 1;
-                }
+        // We do this column by column to avoid materializing the whole dataset as row-major
+        let mut nan_counts = vec![0usize; num_cols];
+        
+        for (col_idx, _) in headers.iter().enumerate() {
+            if let Ok(col_data) = data_source.column_as_f64(col_idx) {
+                nan_counts[col_idx] = col_data.iter().filter(|v| v.is_nan()).count();
             }
         }
 
@@ -249,18 +246,41 @@ impl PlotOxide {
         let mut warnings = Vec::new();
         for (col_idx, &nan_count) in nan_counts.iter().enumerate() {
             if nan_count > 0 && col_idx < headers.len() {
-                let pct = (nan_count as f64 / total_rows as f64) * 100.0;
-                if pct > 5.0 {  // Warn if >5% of values failed to parse
-                    warnings.push(format!(
-                        "Column '{}': {}/{} values ({:.1}%) failed to parse",
-                        headers[col_idx], nan_count, total_rows, pct
-                    ));
+                let pct = (nan_count as f64 / height as f64) * 100.0;
+                
+                // Get column type to be smarter about warnings
+                let is_text_col = if let Ok(series) = data_source.get_column_series(col_idx) {
+                    let dtype = series.dtype();
+                    matches!(dtype, DataType::String | DataType::Boolean) || dtype.is_categorical()
+                } else {
+                    false
+                };
+
+                // Logic:
+                // 1. If it's a text/categorical column and > 20% are NaNs (when parsed as float), 
+                //    it's likely just a text column. Don't warn.
+                // 2. If it's a numeric column and has > 5% NaNs, warn about missing data.
+                // 3. If it's text but low NaN count (< 20%), it might be a dirty numeric column. Warn.
+
+                if is_text_col {
+                    if pct <= 20.0 && pct > 0.0 {
+                        warnings.push(format!(
+                            "Column '{}' (Text): {}/{} values ({:.1}%) could not be parsed as numbers",
+                            headers[col_idx], nan_count, height, pct
+                        ));
+                    }
+                } else {
+                    if pct > 5.0 {
+                        warnings.push(format!(
+                            "Column '{}': {}/{} values ({:.1}%) are missing or invalid",
+                            headers[col_idx], nan_count, height, pct
+                        ));
+                    }
                 }
             }
         }
 
         // Store data source
-        let num_cols = headers.len();
         self.state.data = Some(data_source);
         self.state.view.x_index = 0;
         self.state.view.y_indices = if num_cols > 1 { vec![1] } else { vec![] };
