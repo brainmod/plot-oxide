@@ -8,6 +8,7 @@ mod app;
 mod constants;
 mod data;
 mod error;
+mod lod;
 mod lttb_cache;
 mod perf;
 mod state;
