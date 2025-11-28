@@ -8,19 +8,16 @@ mod spc;
 mod filters;
 mod ui;
 
-pub use view::{ViewState, LayoutMode, LineStyle, PlotMode};
+pub use view::{ViewState, LineStyle, PlotMode}; // Removed LayoutMode
 pub use spc::{SpcConfig, WEViolation};
 pub use filters::FilterConfig;
-pub use ui::UiState;
+pub use ui::{UiState, ActivePanel}; // Re-export ActivePanel
 
 use crate::data::DataSource;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Main application state container
-///
-/// Replaces the previous mega-struct by organizing related fields into
-/// focused state modules.
 #[derive(Default)]
 pub struct AppState {
     /// Current data source (CSV or Parquet)

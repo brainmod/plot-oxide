@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +33,7 @@ pub struct ViewConfig {
 }
 
 pub struct PlotOxide {
-    // Application state (Phase 2 refactoring)
+    // Application state
     pub state: state::AppState,
 }
 
