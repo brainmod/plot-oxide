@@ -3,7 +3,7 @@ use egui_extras::{Column, TableBuilder};
 
 /// Render the data table panel with virtual scrolling (Phase 3.1)
 pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
-    puffin::profile_function!();
+    // puffin::profile_function!(); // Disabled: puffin version incompatibility
     
     let ds = match &app.state.data {
         Some(ds) => ds,
