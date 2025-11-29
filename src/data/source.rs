@@ -76,6 +76,17 @@ impl DataSource {
             numeric_cache: RefCell::new(HashMap::new()),
         })
     }
+    
+    /// Create DataSource from an already-loaded DataFrame (Phase 5 worker support)
+    pub fn from_dataframe(df: DataFrame, path: Option<PathBuf>) -> Result<Self, DataError> {
+        let lazy = df.clone().lazy();
+        Ok(Self {
+            df: lazy,
+            materialized: df,
+            file_path: path,
+            numeric_cache: RefCell::new(HashMap::new()),
+        })
+    }
 
     /// Get a reference to the materialized DataFrame
     pub fn dataframe(&self) -> &DataFrame {

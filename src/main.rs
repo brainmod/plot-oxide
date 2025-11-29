@@ -8,6 +8,7 @@ mod app;
 mod constants;
 mod data;
 mod error;
+mod perf;
 mod state;
 mod widgets;
 mod ui;
@@ -15,9 +16,47 @@ mod ui;
 // Use PlotOxide from app module
 use app::PlotOxide;
 use state::ActivePanel;
+use perf::WorkerResult;
 
 impl App for PlotOxide {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Phase 0: Puffin profiling
+        puffin::profile_function!();
+        puffin::GlobalProfiler::lock().new_frame();
+        
+        // Phase 5: Poll background worker for completed work
+        while let Some(result) = self.state.worker.poll() {
+            match result {
+                WorkerResult::FileLoaded { path, df } => {
+                    // Convert DataFrame to DataSource
+                    if let Ok(ds) = crate::data::DataSource::from_dataframe(df, Some(path.clone())) {
+                        self.state.data = Some(ds);
+                        self.state.current_file = Some(path);
+                        self.state.lttb_cache.invalidate();
+                        self.state.downsampler.force_settle();
+                        
+                        // Auto-select columns
+                        if self.state.column_count() > 1 {
+                            self.state.view.y_indices = vec![1];
+                        }
+                    }
+                    self.state.is_loading = false;
+                }
+                WorkerResult::LttbReady { .. } => {
+                    // Cache is updated by the cache itself
+                }
+                WorkerResult::Error { msg } => {
+                    self.state.ui.set_error(msg);
+                    self.state.is_loading = false;
+                }
+            }
+        }
+        
+        // Show profiler window if enabled
+        if self.state.show_profiler {
+            puffin_egui::profiler_window(ctx);
+        }
+        
         // Set theme
         if self.state.view.dark_mode {
             ctx.set_visuals(egui::Visuals::dark());
@@ -44,6 +83,10 @@ impl App for PlotOxide {
             }
             if i.key_pressed(egui::Key::Escape) {
                 self.state.view.show_help = false;
+            }
+            // P for profiler
+            if i.key_pressed(egui::Key::P) && i.modifiers.ctrl {
+                self.state.show_profiler = !self.state.show_profiler;
             }
         });
 
