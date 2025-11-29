@@ -1,12 +1,11 @@
 use crate::app::PlotOxide;
 use crate::state::{PlotMode, LineStyle};
-use crate::perf;
 use chrono::{DateTime, Utc}; // Removed TimeZone
 use egui_plot::{Bar, BarChart, BoxElem, BoxPlot, BoxSpread, HLine, Line, Plot, Points};
 
 /// Render the main plot area
 pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut eframe::egui::Ui) {
-    puffin::profile_function!();
+    // puffin::profile_function!(); // Disabled: puffin version incompatibility
     
     // Get data source directly to avoid materializing row-major data
     let ds = if let Some(ds) = &app.state.data {
@@ -45,23 +44,47 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
 
     // Detect if user is currently interacting (Phase 4.3)
     let is_dragging = ctx.input(|i| i.pointer.is_decidedly_dragging());
-    
+
+    // Extract filter parameters to avoid borrow conflicts
+    let downsample_threshold = app.state.view.downsample_threshold;
+    let use_row_index = app.state.view.use_row_index;
+    let x_index = app.state.view.x_index;
+    let y_indices = app.state.view.y_indices.clone();
+
     // Create data for all series with filtering and optimized downsampling
     let all_series: Vec<Vec<[f64; 2]>> = {
-        puffin::profile_scope!("series_data_prep");
-        app.state.view.y_indices.iter()
-            .map(|&y_idx| {
-                let y_ref = match ds.get_cached_column(y_idx) {
-                    Ok(r) => r,
-                    Err(_) => return Vec::new(),
-                };
+        // puffin::profile_scope!("series_data_prep"); // Disabled: puffin version incompatibility
 
-                // Prepare points using iterators to avoid allocating intermediate X/Y vectors
-                let points: Vec<[f64; 2]> = if app.state.view.use_row_index {
-                    let x_iter = (0..ds.height()).map(|i| i as f64);
-                    x_iter.zip(y_ref.iter())
+        // Process each series
+        let mut series_data = Vec::new();
+
+        for &y_idx in &y_indices {
+            let y_ref = match ds.get_cached_column(y_idx) {
+                Ok(r) => r,
+                Err(_) => {
+                    series_data.push(Vec::new());
+                    continue;
+                }
+            };
+
+            // Prepare points using iterators to avoid allocating intermediate X/Y vectors
+            let points: Vec<[f64; 2]> = if use_row_index {
+                let x_iter = (0..ds.height()).map(|i| i as f64);
+                x_iter.zip(y_ref.iter())
+                    .enumerate()
+                    .filter_map(|(row_idx, (x_val, &y_val))| {
+                        if app.passes_filters(row_idx, x_val, y_val, y_idx) {
+                            Some([x_val, y_val])
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                if let Ok(x_ref) = ds.get_cached_column(x_index) {
+                    x_ref.iter().zip(y_ref.iter())
                         .enumerate()
-                        .filter_map(|(row_idx, (x_val, &y_val))| {
+                        .filter_map(|(row_idx, (&x_val, &y_val))| {
                             if app.passes_filters(row_idx, x_val, y_val, y_idx) {
                                 Some([x_val, y_val])
                             } else {
@@ -70,32 +93,23 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                         })
                         .collect()
                 } else {
-                    if let Ok(x_ref) = ds.get_cached_column(app.state.view.x_index) {
-                        x_ref.iter().zip(y_ref.iter())
-                            .enumerate()
-                            .filter_map(|(row_idx, (&x_val, &y_val))| {
-                                if app.passes_filters(row_idx, x_val, y_val, y_idx) {
-                                    Some([x_val, y_val])
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    }
-                };
-
-                // Downsample if dataset is large (Phase 4.3: adaptive downsampling)
-                if points.len() > app.state.view.downsample_threshold {
-                    // Convert to tuple format for downsampler
-                    let tuple_points: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
-                    app.state.downsampler.downsample(&tuple_points, app.state.view.downsample_threshold, is_dragging)
-                } else {
-                    points
+                    Vec::new()
                 }
-            })
-            .collect()
+            };
+
+            // Downsample if dataset is large (Phase 4.3: adaptive downsampling)
+            let downsampled = if points.len() > downsample_threshold {
+                // Convert to tuple format for downsampler
+                let tuple_points: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
+                app.state.downsampler.downsample(&tuple_points, downsample_threshold, is_dragging)
+            } else {
+                points
+            };
+
+            series_data.push(downsampled);
+        }
+
+        series_data
     };
 
     // Detect modifier keys for constrained zoom

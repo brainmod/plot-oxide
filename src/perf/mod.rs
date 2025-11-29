@@ -12,7 +12,7 @@ mod worker;
 mod downsample;
 
 pub use cache::LttbCache;
-pub use worker::{BackgroundWorker, WorkerRequest, WorkerResult};
+pub use worker::{BackgroundWorker, WorkerResult};
 pub use downsample::AdaptiveDownsampler;
 
 use std::sync::Arc;

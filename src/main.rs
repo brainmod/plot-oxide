@@ -20,9 +20,9 @@ use perf::WorkerResult;
 
 impl App for PlotOxide {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Phase 0: Puffin profiling
-        puffin::profile_function!();
-        puffin::GlobalProfiler::lock().new_frame();
+        // Phase 0: Puffin profiling (Disabled: puffin version incompatibility)
+        // puffin::profile_function!();
+        // puffin::GlobalProfiler::lock().new_frame();
         
         // Phase 5: Poll background worker for completed work
         while let Some(result) = self.state.worker.poll() {
@@ -52,10 +52,10 @@ impl App for PlotOxide {
             }
         }
         
-        // Show profiler window if enabled
-        if self.state.show_profiler {
-            puffin_egui::profiler_window(ctx);
-        }
+        // Show profiler window if enabled (Disabled: puffin version incompatibility)
+        // if self.state.show_profiler {
+        //     puffin_egui::profiler_window(ctx);
+        // }
         
         // Set theme
         if self.state.view.dark_mode {
