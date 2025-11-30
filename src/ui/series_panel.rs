@@ -9,8 +9,8 @@ pub fn render_series_panel(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui:
     let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
     let shift_held = ctx.input(|i| i.modifiers.shift);
 
-    ui.heading("Y Series");
-    ui.separator();
+    // ui.heading("Y Series");
+    // ui.separator();
 
     let old_y_indices = app.state.view.y_indices.clone();
 

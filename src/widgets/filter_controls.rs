@@ -16,13 +16,13 @@ impl<'a> FilterControls<'a> {
 
     /// Show the filter controls
     pub fn show(self, ui: &mut Ui) -> Response {
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             ui.label("Filters:");
 
             // Empty values filter (Y series only)
             ui.checkbox(&mut self.config.filter_empty, "Empty (Y series only)");
 
-            ui.separator();
+            // ui.separator();
 
             // Y Range filter
             ui.label("Y Range:");
@@ -46,7 +46,7 @@ impl<'a> FilterControls<'a> {
                 self.config.filter_y_max = None;
             }
 
-            ui.separator();
+            // ui.separator();
 
             // X Range filter
             ui.label("X Range:");
@@ -70,7 +70,7 @@ impl<'a> FilterControls<'a> {
                 self.config.filter_x_max = None;
             }
 
-            ui.separator();
+            // ui.separator();
 
             // Outlier filter
             ui.checkbox(&mut self.config.filter_outliers, "Filter Outliers");

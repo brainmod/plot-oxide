@@ -14,11 +14,11 @@ pub use filters::FilterConfig;
 pub use ui::{UiState, ActivePanel}; // Re-export ActivePanel
 
 use crate::data::DataSource;
+use crate::perf::{LttbCache, AdaptiveDownsampler, BackgroundWorker, PlotBuffer};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Main application state container
-#[derive(Default)]
 pub struct AppState {
     /// Current data source (CSV or Parquet)
     pub data: Option<DataSource>,
@@ -43,6 +43,41 @@ pub struct AppState {
 
     /// Performance cache for outlier statistics (column_idx -> (mean, std_dev))
     pub outlier_stats_cache: HashMap<usize, (f64, f64)>,
+    
+    // Performance components (Phases 2, 4, 5)
+    /// LTTB cache with zoom quantization
+    pub lttb_cache: LttbCache,
+    /// Adaptive downsampler for smooth interaction
+    pub downsampler: AdaptiveDownsampler,
+    /// Background worker for async operations
+    pub worker: BackgroundWorker,
+    /// Pre-allocated plot buffer
+    pub plot_buffer: PlotBuffer,
+    /// Loading indicator
+    pub is_loading: bool,
+    /// Show profiler window
+    pub show_profiler: bool,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            data: None,
+            view: ViewState::default(),
+            spc: SpcConfig::default(),
+            filters: FilterConfig::default(),
+            ui: UiState::default(),
+            current_file: None,
+            recent_files: Vec::new(),
+            outlier_stats_cache: HashMap::new(),
+            lttb_cache: LttbCache::default(),
+            downsampler: AdaptiveDownsampler::default(),
+            worker: BackgroundWorker::spawn(),
+            plot_buffer: PlotBuffer::default(),
+            is_loading: false,
+            show_profiler: false,
+        }
+    }
 }
 
 impl AppState {

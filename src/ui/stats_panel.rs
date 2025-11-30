@@ -2,11 +2,11 @@ use crate::app::PlotOxide;
 
 /// Render the statistics summary panel (bottom panel)
 pub fn render_stats_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
-    ui.heading("Statistics Summary");
-    ui.separator();
+    // ui.heading("Statistics Summary");
+    // ui.separator();
 
     eframe::egui::ScrollArea::horizontal().show(ui, |ui| {
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             // Get data from DataSource
             let data = app.data();
             let headers = app.headers();

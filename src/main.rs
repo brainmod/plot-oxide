@@ -8,6 +8,7 @@ mod app;
 mod constants;
 mod data;
 mod error;
+mod perf;
 mod state;
 mod widgets;
 mod ui;
@@ -15,9 +16,47 @@ mod ui;
 // Use PlotOxide from app module
 use app::PlotOxide;
 use state::ActivePanel;
+use perf::WorkerResult;
 
 impl App for PlotOxide {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Phase 0: Puffin profiling (Disabled: puffin version incompatibility)
+        // puffin::profile_function!();
+        // puffin::GlobalProfiler::lock().new_frame();
+        
+        // Phase 5: Poll background worker for completed work
+        while let Some(result) = self.state.worker.poll() {
+            match result {
+                WorkerResult::FileLoaded { path, df } => {
+                    // Convert DataFrame to DataSource
+                    if let Ok(ds) = crate::data::DataSource::from_dataframe(df, Some(path.clone())) {
+                        self.state.data = Some(ds);
+                        self.state.current_file = Some(path);
+                        self.state.lttb_cache.invalidate();
+                        self.state.downsampler.force_settle();
+                        
+                        // Auto-select columns
+                        if self.state.column_count() > 1 {
+                            self.state.view.y_indices = vec![1];
+                        }
+                    }
+                    self.state.is_loading = false;
+                }
+                WorkerResult::LttbReady { .. } => {
+                    // Cache is updated by the cache itself
+                }
+                WorkerResult::Error { msg } => {
+                    self.state.ui.set_error(msg);
+                    self.state.is_loading = false;
+                }
+            }
+        }
+        
+        // Show profiler window if enabled (Disabled: puffin version incompatibility)
+        // if self.state.show_profiler {
+        //     puffin_egui::profiler_window(ctx);
+        // }
+        
         // Set theme
         if self.state.view.dark_mode {
             ctx.set_visuals(egui::Visuals::dark());
@@ -45,6 +84,10 @@ impl App for PlotOxide {
             if i.key_pressed(egui::Key::Escape) {
                 self.state.view.show_help = false;
             }
+            // P for profiler
+            if i.key_pressed(egui::Key::P) && i.modifiers.ctrl {
+                self.state.show_profiler = !self.state.show_profiler;
+            }
         });
 
         // 1. Slim Icon Strip (Far Left)
@@ -61,13 +104,12 @@ impl App for PlotOxide {
                         let is_active = self.state.ui.active_panel == panel;
                         let btn = egui::Button::new(egui::RichText::new(icon).size(20.0))
                             .frame(false)
-                            .min_size(egui::vec2(40.0, 40.0))
+                            .min_size(egui::vec2(36.0, 36.0))
                             .selected(is_active);
                         
                         if ui.add(btn).on_hover_text(tooltip).clicked() {
                             self.state.ui.toggle_panel(panel);
                         }
-                        ui.add_space(4.0);
                     };
 
                     // Primary Tool Icons
@@ -75,29 +117,70 @@ impl App for PlotOxide {
                     toggle_btn("📈", ActivePanel::Series, "Series Selection");
                     toggle_btn("📋", ActivePanel::Table, "Data Table");
                     toggle_btn("∑", ActivePanel::Stats, "Statistics");
-                });
 
-                // Bottom Icons (Global Toggles)
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                    ui.add_space(8.0);
-                    
-                    // Help Toggle
-                    let help_btn = egui::Button::new(egui::RichText::new("❓").size(18.0))
+                    ui.add_space(32.0);
+
+                    // Reset View Button
+                    let reset_btn = egui::Button::new(egui::RichText::new("🔄").size(20.0))
                         .frame(false)
-                        .min_size(egui::vec2(40.0, 40.0));
-                    if ui.add(help_btn).on_hover_text("Help (F1)").clicked() {
-                        self.state.view.show_help = !self.state.view.show_help;
+                        .min_size(egui::vec2(36.0, 36.0));
+                    if ui.add(reset_btn).on_hover_text("Reset View (R)").clicked() {
+                        self.reset_view();
                     }
                     
-                    ui.add_space(8.0);
+                    // Grid Toggle
+                    let grid_btn = egui::Button::new(egui::RichText::new("⊞").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0))
+                        .selected(self.state.view.show_grid);
+                    if ui.add(grid_btn).on_hover_text("Grid (G)").clicked() {
+                        self.state.view.show_grid = !self.state.view.show_grid;
+                    }
+
+                    // Legend Toggle
+                    let legend_btn = egui::Button::new(egui::RichText::new("🏷").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0))
+                        .selected(self.state.view.show_legend);
+                    if ui.add(legend_btn).on_hover_text("Legend (L)").clicked() {
+                        self.state.view.show_legend = !self.state.view.show_legend;
+                    }
+
+                    // Zoom Toggle
+                    let zoom_btn = egui::Button::new(egui::RichText::new("🔍").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0))
+                        .selected(self.state.view.allow_zoom);
+                    if ui.add(zoom_btn).on_hover_text("Zoom").clicked() {
+                        self.state.view.allow_zoom = !self.state.view.allow_zoom;
+                    }
+
+                    // Pan Toggle
+                    let pan_btn = egui::Button::new(egui::RichText::new("✋").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0))
+                        .selected(self.state.view.allow_drag);
+                    if ui.add(pan_btn).on_hover_text("Pan").clicked() {
+                        self.state.view.allow_drag = !self.state.view.allow_drag;
+                    }
+
+                    ui.add_space(32.0);
 
                     // Theme Toggle
                     let theme_icon = if self.state.view.dark_mode { "🌙" } else { "☀" };
-                    let theme_btn = egui::Button::new(egui::RichText::new(theme_icon).size(18.0))
+                    let theme_btn = egui::Button::new(egui::RichText::new(theme_icon).size(20.0))
                         .frame(false)
-                        .min_size(egui::vec2(40.0, 40.0));
+                        .min_size(egui::vec2(36.0, 36.0));
                     if ui.add(theme_btn).on_hover_text("Toggle Theme").clicked() {
                         self.state.view.dark_mode = !self.state.view.dark_mode;
+                    }
+
+                    // Help Toggle
+                    let help_btn = egui::Button::new(egui::RichText::new("❓").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0));
+                    if ui.add(help_btn).on_hover_text("Help (F1)").clicked() {
+                        self.state.view.show_help = !self.state.view.show_help;
                     }
                 });
             });
@@ -144,11 +227,7 @@ impl App for PlotOxide {
                                 if self.state.has_data() {
                                     ui::render_series_panel(self, ctx, ui);
                                 } else {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(20.0);
-                                        ui.label("No data loaded.");
-                                        ui.label("Open 📂 to load a file.");
-                                    });
+                                    ui.label("No data loaded.");
                                 }
                             },
                             ActivePanel::Table => {

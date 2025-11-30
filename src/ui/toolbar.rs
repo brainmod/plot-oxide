@@ -40,14 +40,22 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
                     }
                 });
         }
-
-        ui.separator();
-
-        // Display current file using Option combinator
-        app.state.current_file
-            .as_ref()
-            .map(|file| ui.label(format!("📄 {}", file.display())));
     });
+
+    // ui.separator();
+
+    // Display current file using Option combinator
+    app.state.current_file
+        .as_ref()
+        .map(|file| {
+        ui.label(
+            file.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Unknown")
+        )
+        .on_hover_text(format!("📄 {}", file.display()))
+        });
+    
 
     ui.separator();
 
@@ -67,7 +75,7 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
     if app.state.has_data() {
         let headers = app.headers();
         // Axis selection and controls
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             let old_x = app.state.view.x_index;
             let old_use_row = app.state.view.use_row_index;
 
@@ -95,53 +103,55 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
                 app.state.view.reset_bounds = true;
             }
 
-            ui.separator();
+            // ui.separator();
 
-            if ui.button("Reset View").clicked() {
-                app.reset_view();
-            }
+            // if ui.button("🔄").on_hover_text("Reset the view to default bounds").clicked() {
+            //     app.reset_view();
+            // }
         });
 
+        ui.separator();
+        
         // Compact display controls with icon buttons
-        ui.horizontal(|ui| {
-            ui.label("Display:");
-            ui.toggle_value(&mut app.state.view.show_grid, "⊞").on_hover_text("Grid (G)");
-            ui.toggle_value(&mut app.state.view.show_legend, "🏷").on_hover_text("Legend (L)");
-            ui.toggle_value(&mut app.state.view.allow_zoom, "🔍").on_hover_text("Zoom");
-            ui.toggle_value(&mut app.state.view.allow_drag, "✋").on_hover_text("Pan");
-            ui.toggle_value(&mut app.state.view.show_data_table, "📋").on_hover_text("Data Table");
-            ui.toggle_value(&mut app.state.view.show_stats_panel, "∑").on_hover_text("Statistics");
+        // ui.horizontal(|ui| {
+        //     // ui.label("Display:");
+        //     // ui.toggle_value(&mut app.state.view.show_grid, "⊞").on_hover_text("Grid (G)");
+        //     // ui.toggle_value(&mut app.state.view.show_legend, "🏷").on_hover_text("Legend (L)");
+        //     // ui.toggle_value(&mut app.state.view.allow_zoom, "🔍").on_hover_text("Zoom");
+        //     // ui.toggle_value(&mut app.state.view.allow_drag, "✋").on_hover_text("Pan");
+        //     // ui.toggle_value(&mut app.state.view.show_data_table, "📋").on_hover_text("Data Table");
+        //     // ui.toggle_value(&mut app.state.view.show_stats_panel, "∑").on_hover_text("Statistics");
 
-            ui.separator();
+        //     // ui.separator();
 
-            if ui.button("💾").on_hover_text("Export CSV").clicked() {
-                app.export_csv();
-            }
+        //     // if ui.button("💾").on_hover_text("Export CSV").clicked() {
+        //     //     app.export_csv();
+        //     // }
 
-            if ui.button("⚙").on_hover_text("Save Config").clicked() {
-                app.save_config();
-            }
-            if ui.button("📥").on_hover_text("Load Config").clicked() {
-                app.load_config();
-            }
+        //     // if ui.button("⚙").on_hover_text("Save Config").clicked() {
+        //     //     app.save_config();
+        //     // }
+        //     // if ui.button("📥").on_hover_text("Load Config").clicked() {
+        //     //     app.load_config();
+        //     // }
 
-            ui.separator();
-            if ui.button(if app.state.view.dark_mode { "🌙" } else { "☀" }).on_hover_text("Toggle theme").clicked() {
-                app.state.view.dark_mode = !app.state.view.dark_mode;
-            }
+        //     // ui.separator();
+        //     // if ui.button(if app.state.view.dark_mode { "🌙" } else { "☀" }).on_hover_text("Toggle theme").clicked() {
+        //     //     app.state.view.dark_mode = !app.state.view.dark_mode;
+        //     // }
 
-            ui.separator();
-            if ui.button("❓").on_hover_text("Help (F1)").clicked() {
-                app.state.view.show_help = !app.state.view.show_help;
-            }
-        });
+        //     // ui.separator();
+        //     // if ui.button("❓").on_hover_text("Help (F1)").clicked() {
+        //     //     app.state.view.show_help = !app.state.view.show_help;
+        //     // }
+        // });
 
         // Plot mode and style controls (collapsible)
-        eframe::egui::CollapsingHeader::new("📈 Plot Mode & Style")
+        eframe::egui::CollapsingHeader::new("📈 Plot Mode")
             .id_salt("plot_mode")
-            .default_open(true)
+            .default_open(false)
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
+                ui.vertical(|ui| {
                     ui.label("Mode:");
                     ui.radio_value(&mut app.state.view.plot_mode, PlotMode::Scatter, "Scatter/Line");
                     ui.radio_value(&mut app.state.view.plot_mode, PlotMode::Histogram, "Histogram");
@@ -154,25 +164,25 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
                 // Mode-specific controls
                 match app.state.view.plot_mode {
                     PlotMode::Histogram => {
-                        ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
                             ui.label("Bins:");
                             ui.add(eframe::egui::Slider::new(&mut app.state.view.histogram_bins, 5..=50));
                         });
                     }
                     PlotMode::XbarR => {
-                        ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
                             ui.label("Subgroup:");
                             ui.add(eframe::egui::Slider::new(&mut app.state.spc.xbarr_subgroup_size, 2..=10));
                         });
                     }
                     PlotMode::PChart => {
-                        ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
                             ui.label("Sample n:");
                             ui.add(eframe::egui::Slider::new(&mut app.state.spc.pchart_sample_size, 10..=200));
                         });
                     }
                     PlotMode::Scatter => {
-                        ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
                             ui.label("Style:");
                             ui.radio_value(&mut app.state.view.line_style, LineStyle::Line, "Line");
                             ui.radio_value(&mut app.state.view.line_style, LineStyle::Points, "Points");
@@ -186,9 +196,9 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
         // Only show SPC/Analysis controls in Scatter mode
         if app.state.view.plot_mode == PlotMode::Scatter {
             // SPC Controls (collapsible)
-            eframe::egui::CollapsingHeader::new("📊 SPC Controls")
+            eframe::egui::CollapsingHeader::new("📊 Overlays")
                 .id_salt("spc_controls")
-                .default_open(true)
+                .default_open(false)
                 .show(ui, |ui| {
                     SpcControls::new(&mut app.state.spc).show(ui);
                 });
@@ -196,13 +206,13 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
             // Data Filtering Controls (collapsible)
             eframe::egui::CollapsingHeader::new("🔍 Filters")
                 .id_salt("filter_controls")
-                .default_open(true)
+                .default_open(false)
                 .show(ui, |ui| {
                     FilterControls::new(&mut app.state.filters).show(ui);
                 });
         }
 
-        ui.separator();
+        // ui.separator();
 
         // Check if no Y series selected
         if app.state.view.y_indices.is_empty() {
