@@ -5,7 +5,7 @@ use egui_plot::{Bar, BarChart, BoxElem, BoxPlot, BoxSpread, HLine, Line, Plot, P
 
 /// Render the main plot area
 pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut eframe::egui::Ui) {
-    // puffin::profile_function!(); // Disabled: puffin version incompatibility
+    profiling::scope!("render_plot");
     
     // Get data source directly to avoid materializing row-major data
     let ds = if let Some(ds) = &app.state.data {
@@ -53,7 +53,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
 
     // Create data for all series with filtering and optimized downsampling
     let all_series: Vec<Vec<[f64; 2]>> = {
-        // puffin::profile_scope!("series_data_prep"); // Disabled: puffin version incompatibility
+        profiling::scope!("series_data_prep");
 
         // Process each series
         let mut series_data = Vec::new();
@@ -857,5 +857,213 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                 app.state.view.selected_point = None;
             }
         }
+    }
+    
+    // === Edge Indicators & Minimap ===
+    // Draw indicators when data extends beyond visible area
+    
+    // Calculate actual data bounds across all series
+    let (data_x_min, data_x_max, data_y_min, data_y_max) = {
+        let mut x_min = f64::INFINITY;
+        let mut x_max = f64::NEG_INFINITY;
+        let mut y_min = f64::INFINITY;
+        let mut y_max = f64::NEG_INFINITY;
+        
+        for series in &all_series {
+            for point in series {
+                if point[0].is_finite() {
+                    x_min = x_min.min(point[0]);
+                    x_max = x_max.max(point[0]);
+                }
+                if point[1].is_finite() {
+                    y_min = y_min.min(point[1]);
+                    y_max = y_max.max(point[1]);
+                }
+            }
+        }
+        (x_min, x_max, y_min, y_max)
+    };
+    
+    // Get current view bounds
+    let view_bounds = plot_response.transform.bounds();
+    let view_x_min = view_bounds.min()[0];
+    let view_x_max = view_bounds.max()[0];
+    let view_y_min = view_bounds.min()[1];
+    let view_y_max = view_bounds.max()[1];
+    
+    // Check which directions have data outside view
+    let has_left = data_x_min < view_x_min;
+    let has_right = data_x_max > view_x_max;
+    let has_bottom = data_y_min < view_y_min;
+    let has_top = data_y_max > view_y_max;
+    
+    let plot_rect = plot_response.response.rect;
+    let painter = ui.painter();
+    
+    // Draw gradient edge indicators
+    let indicator_width = 20.0;
+    let indicator_color = eframe::egui::Color32::from_rgba_unmultiplied(100, 150, 255, 60);
+    let arrow_color = eframe::egui::Color32::from_rgba_unmultiplied(100, 150, 255, 180);
+    
+    if has_left {
+        // Left gradient
+        let gradient_rect = eframe::egui::Rect::from_min_max(
+            plot_rect.left_top(),
+            eframe::egui::pos2(plot_rect.left() + indicator_width, plot_rect.bottom()),
+        );
+        painter.rect_filled(gradient_rect, 0.0, indicator_color);
+        // Arrow
+        let arrow_center = eframe::egui::pos2(plot_rect.left() + 8.0, plot_rect.center().y);
+        painter.text(
+            arrow_center,
+            eframe::egui::Align2::CENTER_CENTER,
+            "◀",
+            eframe::egui::FontId::proportional(14.0),
+            arrow_color,
+        );
+    }
+    
+    if has_right {
+        // Right gradient
+        let gradient_rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(plot_rect.right() - indicator_width, plot_rect.top()),
+            plot_rect.right_bottom(),
+        );
+        painter.rect_filled(gradient_rect, 0.0, indicator_color);
+        // Arrow
+        let arrow_center = eframe::egui::pos2(plot_rect.right() - 8.0, plot_rect.center().y);
+        painter.text(
+            arrow_center,
+            eframe::egui::Align2::CENTER_CENTER,
+            "▶",
+            eframe::egui::FontId::proportional(14.0),
+            arrow_color,
+        );
+    }
+    
+    if has_bottom {
+        // Bottom gradient
+        let gradient_rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(plot_rect.left(), plot_rect.bottom() - indicator_width),
+            plot_rect.right_bottom(),
+        );
+        painter.rect_filled(gradient_rect, 0.0, indicator_color);
+        // Arrow
+        let arrow_center = eframe::egui::pos2(plot_rect.center().x, plot_rect.bottom() - 8.0);
+        painter.text(
+            arrow_center,
+            eframe::egui::Align2::CENTER_CENTER,
+            "▼",
+            eframe::egui::FontId::proportional(14.0),
+            arrow_color,
+        );
+    }
+    
+    if has_top {
+        // Top gradient
+        let gradient_rect = eframe::egui::Rect::from_min_max(
+            plot_rect.left_top(),
+            eframe::egui::pos2(plot_rect.right(), plot_rect.top() + indicator_width),
+        );
+        painter.rect_filled(gradient_rect, 0.0, indicator_color);
+        // Arrow
+        let arrow_center = eframe::egui::pos2(plot_rect.center().x, plot_rect.top() + 8.0);
+        painter.text(
+            arrow_center,
+            eframe::egui::Align2::CENTER_CENTER,
+            "▲",
+            eframe::egui::FontId::proportional(14.0),
+            arrow_color,
+        );
+    }
+    
+    // Draw minimap if zoomed in significantly
+    let x_zoom_ratio = (data_x_max - data_x_min) / (view_x_max - view_x_min);
+    let y_zoom_ratio = (data_y_max - data_y_min) / (view_y_max - view_y_min);
+    let is_zoomed = x_zoom_ratio > 1.5 || y_zoom_ratio > 1.5;
+    
+    if is_zoomed && data_x_max > data_x_min && data_y_max > data_y_min {
+        let minimap_size = 80.0;
+        let minimap_margin = 10.0;
+        let minimap_rect = eframe::egui::Rect::from_min_size(
+            eframe::egui::pos2(
+                plot_rect.right() - minimap_size - minimap_margin,
+                plot_rect.top() + minimap_margin,
+            ),
+            eframe::egui::vec2(minimap_size, minimap_size),
+        );
+        
+        // Background
+        painter.rect_filled(
+            minimap_rect,
+            4.0,
+            eframe::egui::Color32::from_rgba_unmultiplied(30, 30, 30, 200),
+        );
+        painter.rect_stroke(
+            minimap_rect,
+            4.0,
+            eframe::egui::Stroke::new(1.0, eframe::egui::Color32::from_rgb(80, 80, 80)),
+            eframe::egui::StrokeKind::Inside,
+        );
+        
+        // Draw simplified data outline (just bounding box of each series)
+        for (series_idx, series) in all_series.iter().enumerate() {
+            if series.is_empty() {
+                continue;
+            }
+            let color = PlotOxide::get_series_color(series_idx).gamma_multiply(0.7);
+            
+            // Map a few points to minimap coordinates
+            let step = (series.len() / 50).max(1);
+            let mini_points: Vec<eframe::egui::Pos2> = series.iter()
+                .step_by(step)
+                .filter_map(|p| {
+                    if !p[0].is_finite() || !p[1].is_finite() {
+                        return None;
+                    }
+                    let x_frac = (p[0] - data_x_min) / (data_x_max - data_x_min);
+                    let y_frac = (p[1] - data_y_min) / (data_y_max - data_y_min);
+                    Some(eframe::egui::pos2(
+                        minimap_rect.left() + x_frac as f32 * minimap_rect.width(),
+                        minimap_rect.bottom() - y_frac as f32 * minimap_rect.height(),
+                    ))
+                })
+                .collect();
+            
+            if mini_points.len() >= 2 {
+                for window in mini_points.windows(2) {
+                    painter.line_segment([window[0], window[1]], eframe::egui::Stroke::new(1.0, color));
+                }
+            }
+        }
+        
+        // Draw viewport rectangle
+        let vp_x_min = ((view_x_min - data_x_min) / (data_x_max - data_x_min)).clamp(0.0, 1.0);
+        let vp_x_max = ((view_x_max - data_x_min) / (data_x_max - data_x_min)).clamp(0.0, 1.0);
+        let vp_y_min = ((view_y_min - data_y_min) / (data_y_max - data_y_min)).clamp(0.0, 1.0);
+        let vp_y_max = ((view_y_max - data_y_min) / (data_y_max - data_y_min)).clamp(0.0, 1.0);
+        
+        let viewport_rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(
+                minimap_rect.left() + vp_x_min as f32 * minimap_rect.width(),
+                minimap_rect.bottom() - vp_y_max as f32 * minimap_rect.height(),
+            ),
+            eframe::egui::pos2(
+                minimap_rect.left() + vp_x_max as f32 * minimap_rect.width(),
+                minimap_rect.bottom() - vp_y_min as f32 * minimap_rect.height(),
+            ),
+        );
+        
+        painter.rect_filled(
+            viewport_rect,
+            2.0,
+            eframe::egui::Color32::from_rgba_unmultiplied(255, 255, 255, 30),
+        );
+        painter.rect_stroke(
+            viewport_rect,
+            2.0,
+            eframe::egui::Stroke::new(1.5, eframe::egui::Color32::from_rgb(200, 200, 200)),
+            eframe::egui::StrokeKind::Inside,
+        );
     }
 }

@@ -8,10 +8,10 @@ mod spc;
 mod filters;
 mod ui;
 
-pub use view::{ViewState, LineStyle, PlotMode}; // Removed LayoutMode
+pub use view::{ViewState, LineStyle, PlotMode};
 pub use spc::{SpcConfig, WEViolation};
 pub use filters::FilterConfig;
-pub use ui::{UiState, ActivePanel}; // Re-export ActivePanel
+pub use ui::{UiState, ActivePanel, TableState, CachedStats};
 
 use crate::data::DataSource;
 use crate::perf::{LttbCache, AdaptiveDownsampler, BackgroundWorker, PlotBuffer};

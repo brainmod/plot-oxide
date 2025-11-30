@@ -314,8 +314,9 @@ impl PlotOxide {
             self.state.ui.set_error(warning_msg);
         }
 
-        // Invalidate caches
+        // Invalidate all caches (stats, table indices, outliers)
         self.state.outlier_stats_cache.clear();
+        self.state.ui.on_data_loaded();
 
         Ok(())
     }
