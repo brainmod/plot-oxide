@@ -16,7 +16,7 @@ impl<'a> SpcControls<'a> {
 
     /// Show the SPC controls
     pub fn show(self, ui: &mut Ui) -> Response {
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             ui.label("SPC:");
 
             // Control Limits
@@ -32,7 +32,7 @@ impl<'a> SpcControls<'a> {
             // Western Electric Rules
             ui.checkbox(&mut self.config.show_we_rules, "WE Rules");
 
-            ui.separator();
+            // ui.separator();
 
             // Process Capability (Cp/Cpk)
             ui.checkbox(&mut self.config.show_capability, "Cp/Cpk");
@@ -43,7 +43,7 @@ impl<'a> SpcControls<'a> {
                 ui.add(egui::DragValue::new(&mut self.config.spec_upper).speed(0.1));
             }
 
-            ui.separator();
+            // ui.separator();
 
             // Outliers
             ui.checkbox(&mut self.config.show_outliers, "Outliers");
@@ -52,7 +52,7 @@ impl<'a> SpcControls<'a> {
                 ui.add(egui::Slider::new(&mut self.config.outlier_threshold, 2.0..=6.0).step_by(0.5));
             }
 
-            ui.separator();
+            // ui.separator();
 
             // Moving Average
             ui.checkbox(&mut self.config.show_moving_avg, "MA");
@@ -68,7 +68,7 @@ impl<'a> SpcControls<'a> {
                 ui.add(egui::Slider::new(&mut self.config.ewma_lambda, 0.05..=0.5).step_by(0.05));
             }
 
-            ui.separator();
+            // ui.separator();
 
             // Regression
             ui.checkbox(&mut self.config.show_regression, "Regression");

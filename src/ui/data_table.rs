@@ -13,7 +13,7 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
     let headers = app.headers();
     let total_rows = ds.height();
 
-    ui.heading("Data Table");
+    // ui.heading("Data Table");
 
     ui.horizontal(|ui| {
         ui.label("Filter:");

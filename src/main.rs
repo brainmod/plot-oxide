@@ -104,13 +104,12 @@ impl App for PlotOxide {
                         let is_active = self.state.ui.active_panel == panel;
                         let btn = egui::Button::new(egui::RichText::new(icon).size(20.0))
                             .frame(false)
-                            .min_size(egui::vec2(40.0, 40.0))
+                            .min_size(egui::vec2(36.0, 36.0))
                             .selected(is_active);
                         
                         if ui.add(btn).on_hover_text(tooltip).clicked() {
                             self.state.ui.toggle_panel(panel);
                         }
-                        ui.add_space(4.0);
                     };
 
                     // Primary Tool Icons
@@ -118,29 +117,70 @@ impl App for PlotOxide {
                     toggle_btn("📈", ActivePanel::Series, "Series Selection");
                     toggle_btn("📋", ActivePanel::Table, "Data Table");
                     toggle_btn("∑", ActivePanel::Stats, "Statistics");
-                });
 
-                // Bottom Icons (Global Toggles)
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                    ui.add_space(8.0);
-                    
-                    // Help Toggle
-                    let help_btn = egui::Button::new(egui::RichText::new("❓").size(18.0))
+                    ui.add_space(32.0);
+
+                    // Reset View Button
+                    let reset_btn = egui::Button::new(egui::RichText::new("🔄").size(20.0))
                         .frame(false)
-                        .min_size(egui::vec2(40.0, 40.0));
-                    if ui.add(help_btn).on_hover_text("Help (F1)").clicked() {
-                        self.state.view.show_help = !self.state.view.show_help;
+                        .min_size(egui::vec2(36.0, 36.0));
+                    if ui.add(reset_btn).on_hover_text("Reset View (R)").clicked() {
+                        self.reset_view();
                     }
                     
-                    ui.add_space(8.0);
+                    // Grid Toggle
+                    let grid_btn = egui::Button::new(egui::RichText::new("⊞").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0))
+                        .selected(self.state.view.show_grid);
+                    if ui.add(grid_btn).on_hover_text("Grid (G)").clicked() {
+                        self.state.view.show_grid = !self.state.view.show_grid;
+                    }
+
+                    // Legend Toggle
+                    let legend_btn = egui::Button::new(egui::RichText::new("🏷").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0))
+                        .selected(self.state.view.show_legend);
+                    if ui.add(legend_btn).on_hover_text("Legend (L)").clicked() {
+                        self.state.view.show_legend = !self.state.view.show_legend;
+                    }
+
+                    // Zoom Toggle
+                    let zoom_btn = egui::Button::new(egui::RichText::new("🔍").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0))
+                        .selected(self.state.view.allow_zoom);
+                    if ui.add(zoom_btn).on_hover_text("Zoom").clicked() {
+                        self.state.view.allow_zoom = !self.state.view.allow_zoom;
+                    }
+
+                    // Pan Toggle
+                    let pan_btn = egui::Button::new(egui::RichText::new("✋").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0))
+                        .selected(self.state.view.allow_drag);
+                    if ui.add(pan_btn).on_hover_text("Pan").clicked() {
+                        self.state.view.allow_drag = !self.state.view.allow_drag;
+                    }
+
+                    ui.add_space(32.0);
 
                     // Theme Toggle
                     let theme_icon = if self.state.view.dark_mode { "🌙" } else { "☀" };
-                    let theme_btn = egui::Button::new(egui::RichText::new(theme_icon).size(18.0))
+                    let theme_btn = egui::Button::new(egui::RichText::new(theme_icon).size(20.0))
                         .frame(false)
-                        .min_size(egui::vec2(40.0, 40.0));
+                        .min_size(egui::vec2(36.0, 36.0));
                     if ui.add(theme_btn).on_hover_text("Toggle Theme").clicked() {
                         self.state.view.dark_mode = !self.state.view.dark_mode;
+                    }
+
+                    // Help Toggle
+                    let help_btn = egui::Button::new(egui::RichText::new("❓").size(20.0))
+                        .frame(false)
+                        .min_size(egui::vec2(36.0, 36.0));
+                    if ui.add(help_btn).on_hover_text("Help (F1)").clicked() {
+                        self.state.view.show_help = !self.state.view.show_help;
                     }
                 });
             });
@@ -187,11 +227,7 @@ impl App for PlotOxide {
                                 if self.state.has_data() {
                                     ui::render_series_panel(self, ctx, ui);
                                 } else {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(20.0);
-                                        ui.label("No data loaded.");
-                                        ui.label("Open 📂 to load a file.");
-                                    });
+                                    ui.label("No data loaded.");
                                 }
                             },
                             ActivePanel::Table => {
