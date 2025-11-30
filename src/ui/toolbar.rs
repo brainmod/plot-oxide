@@ -44,16 +44,18 @@ pub fn render_toolbar_and_controls(app: &mut PlotOxide, ctx: &eframe::egui::Cont
 
     // ui.separator();
 
-    // Display current file using Option combinator
+    // Display current file with icon
     app.state.current_file
         .as_ref()
         .map(|file| {
         ui.label(
-            file.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("Unknown")
+            format!("📄 {}", 
+                file.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown")
+            )
         )
-        .on_hover_text(format!("📄 {}", file.display()))
+        .on_hover_text(file.display().to_string())
         });
     
 

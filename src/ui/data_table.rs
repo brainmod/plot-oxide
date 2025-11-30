@@ -1,34 +1,31 @@
 use crate::app::PlotOxide;
 use egui_extras::{Column, TableBuilder};
+use arboard::Clipboard;
 
 /// Recompute filtered and sorted row indices
 fn recompute_indices(
-    app: &mut PlotOxide,
+    data_source: &crate::data::DataSource,
+    row_filter: &str,
+    sort_column: Option<usize>,
+    sort_ascending: bool,
+    data_version: u64,
+    table_state: &mut crate::state::TableState,
     display_cols: &[usize],
 ) {
     profiling::scope!("recompute_table_indices");
     
-    let ds = match &app.state.data {
-        Some(ds) => ds,
-        None => return,
-    };
+    let ds = data_source;
     
     let total_rows = ds.height();
-    let filter = &app.state.ui.row_filter;
-    let filter_lower = filter.to_lowercase();
-    let filter_active = !filter.is_empty();
+    let filter_lower = row_filter.to_lowercase();
+    let filter_active = !row_filter.is_empty();
     
     // Phase 1: Filter
     let mut filtered: Vec<usize> = if filter_active {
-        // Pre-fetch column string data for filtering (more efficient than per-row lookup)
-        let col_strings: Vec<Vec<String>> = display_cols.iter()
-            .filter_map(|&col_idx| ds.column_as_string(col_idx).ok())
-            .collect();
-        
         (0..total_rows)
             .filter(|&row_idx| {
-                col_strings.iter().any(|col| {
-                    col.get(row_idx)
+                display_cols.iter().any(|&col_idx| {
+                    ds.get_string(row_idx, col_idx)
                         .map(|s| s.to_lowercase().contains(&filter_lower))
                         .unwrap_or(false)
                 })
@@ -38,12 +35,12 @@ fn recompute_indices(
         (0..total_rows).collect()
     };
     
-    app.state.ui.table.filtered_indices = filtered.clone();
+    table_state.filtered_indices = filtered.clone();
     
     // Phase 2: Sort
-    if let Some(sort_col) = app.state.ui.sort_column {
+    if let Some(sort_col) = sort_column {
         if let Ok(sort_data) = ds.get_cached_column(sort_col) {
-            let ascending = app.state.ui.sort_ascending;
+            let ascending = sort_ascending;
             filtered.sort_by(|&a, &b| {
                 let va = sort_data.get(a).copied().unwrap_or(f64::NAN);
                 let vb = sort_data.get(b).copied().unwrap_or(f64::NAN);
@@ -62,12 +59,12 @@ fn recompute_indices(
         }
     }
     
-    app.state.ui.table.display_indices = filtered;
-    app.state.ui.table.update_cache_keys(
-        &app.state.ui.row_filter,
-        app.state.ui.sort_column,
-        app.state.ui.sort_ascending,
-        app.state.ui.data_version,
+    table_state.display_indices = filtered;
+    table_state.update_cache_keys(
+        row_filter,
+        sort_column,
+        sort_ascending,
+        data_version,
     );
 }
 
@@ -97,13 +94,24 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
                 .hint_text("Filter rows...")
                 .desired_width(120.0)
         );
-        if filter_response.changed() {
-            // Invalidate cache when filter changes
-            app.state.ui.table.invalidate();
-        }
-        if ui.small_button("✖").on_hover_text("Clear filter").clicked() {
+        let filter_changed = filter_response.changed();
+        let clear_filter_clicked = ui.small_button("✖").on_hover_text("Clear filter").clicked();
+
+        if clear_filter_clicked {
             app.state.ui.row_filter.clear();
+        }
+        
+        if filter_changed || clear_filter_clicked {
             app.state.ui.table.invalidate();
+            recompute_indices(
+                ds,
+                &app.state.ui.row_filter,
+                app.state.ui.sort_column,
+                app.state.ui.sort_ascending,
+                app.state.ui.data_version,
+                &mut app.state.ui.table,
+                &display_cols,
+            );
         }
         
         ui.separator();
@@ -130,7 +138,9 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
         if selected_count > 0 {
             ui.label(format!("{} selected", selected_count));
             if ui.small_button("Copy").on_hover_text("Copy selected rows (Ctrl+C)").clicked() {
-                copy_selected_rows(app, &display_cols);
+                let selected_rows_cloned = app.state.ui.table.selected_rows.clone();
+                let mut ui_error_setter = |msg| app.state.ui.set_error(msg);
+                copy_selected_rows(ds, &headers, selected_rows_cloned, &display_cols, &mut ui_error_setter);
             }
             if ui.small_button("Clear").clicked() {
                 app.state.ui.table.clear_selection();
@@ -145,10 +155,18 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
         app.state.ui.sort_ascending,
         app.state.ui.data_version,
     ) {
-        recompute_indices(app, &display_cols);
+        recompute_indices(
+            ds,
+            &app.state.ui.row_filter,
+            app.state.ui.sort_column,
+            app.state.ui.sort_ascending,
+            app.state.ui.data_version,
+            &mut app.state.ui.table,
+            &display_cols,
+        );
     }
-    
-    let display_indices = &app.state.ui.table.display_indices;
+
+    let display_indices = app.state.ui.table.display_indices.clone();
     let filtered_count = display_indices.len();
     
     // Status line
@@ -167,6 +185,15 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
             if ui.small_button("✖").on_hover_text("Clear sort").clicked() {
                 app.state.ui.clear_sort();
                 app.state.ui.table.invalidate();
+                recompute_indices(
+                    ds,
+                    &app.state.ui.row_filter,
+                    app.state.ui.sort_column,
+                    app.state.ui.sort_ascending,
+                    app.state.ui.data_version,
+                    &mut app.state.ui.table,
+                    &display_cols,
+                );
             }
         }
     });
@@ -174,10 +201,13 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
     ui.separator();
 
     let row_height = 18.0;
-    
+
     // Pre-fetch string columns for visible rows (performance optimization)
     // We'll do direct cell access but with cached column data
-    
+    let column_strings: Vec<Vec<String>> = display_cols.iter()
+        .filter_map(|&col_idx| ds.column_as_string(col_idx).ok())
+        .collect();
+
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(eframe::egui::Layout::left_to_right(eframe::egui::Align::Center))
@@ -251,11 +281,15 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
                 let filter_lower = app.state.ui.row_filter.to_lowercase();
                 let highlight_filter = !filter_lower.is_empty();
                 
-                for &col_idx in &display_cols {
+                // for &col_idx in &display_cols {
+                for (i, &col_idx) in display_cols.iter().enumerate() {
                     row.col(|ui| {
-                        let ds = app.state.data.as_ref().unwrap();
-                        let cell = ds.get_string(row_idx, col_idx).unwrap_or_default();
-                        
+                        // // Use pre-fetched column strings (critical perf fix)
+                        let cell = column_strings.get(i)
+                            .and_then(|col| col.get(row_idx))
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
+
                         // Highlight matching text
                         if highlight_filter && cell.to_lowercase().contains(&filter_lower) {
                             // Find match position and highlight
@@ -275,12 +309,12 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
                                     ui.label(after);
                                 });
                             } else {
-                                ui.label(&cell);
+                                ui.label(cell); // Fallback if contains() is true but find() fails
                             }
                         } else if col_idx == app.state.view.x_index || app.state.view.y_indices.contains(&col_idx) {
-                            ui.strong(&cell);
+                            ui.strong(cell);
                         } else {
-                            ui.label(&cell);
+                            ui.label(cell);
                         }
                     });
                 }
@@ -289,25 +323,29 @@ pub fn render_data_table_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
     
     // Handle keyboard shortcuts
     if ui.input(|i| i.modifiers.ctrl && i.key_pressed(eframe::egui::Key::C)) {
-        copy_selected_rows(app, &display_cols);
+        let selected_rows_cloned = app.state.ui.table.selected_rows.clone();
+        let mut ui_error_setter = |msg| app.state.ui.set_error(msg);
+        copy_selected_rows(ds, &headers, selected_rows_cloned, &display_cols, &mut ui_error_setter);
     }
     if ui.input(|i| i.modifiers.ctrl && i.key_pressed(eframe::egui::Key::A)) {
         // Select all visible rows
-        for &row_idx in display_indices {
+        for &row_idx in &display_indices {
             app.state.ui.table.selected_rows.insert(row_idx);
         }
     }
 }
 
 /// Copy selected rows to clipboard as TSV
-fn copy_selected_rows(app: &mut PlotOxide, display_cols: &[usize]) {
-    let ds = match &app.state.data {
-        Some(ds) => ds,
-        None => return,
-    };
+fn copy_selected_rows(
+    data_source: &crate::data::DataSource,
+    headers: &[String],
+    selected_rows: std::collections::HashSet<usize>,
+    display_cols: &[usize],
+    ui_error_setter: &mut dyn FnMut(String),
+) {
+    let ds = data_source;
     
-    let headers = app.headers();
-    let selected = &app.state.ui.table.selected_rows;
+    let selected = &selected_rows; // Use reference here, as the function now owns it
     
     if selected.is_empty() {
         return;
@@ -335,12 +373,11 @@ fn copy_selected_rows(app: &mut PlotOxide, display_cols: &[usize]) {
     }
     
     // Copy to clipboard
-    if let Some(ctx) = app.state.data.as_ref().map(|_| {}) {
-        // We need egui context, but we don't have it here
-        // This will be handled by the UI layer
+    if let Ok(mut ctx) = arboard::Clipboard::new() {
+        if let Err(e) = ctx.set_text(output) {
+            ui_error_setter(format!("Failed to copy to clipboard: {}", e));
+        }
+    } else {
+        ui_error_setter("Failed to get clipboard access.".to_string());
     }
-    
-    // For now, just print (actual clipboard integration needs ctx)
-    #[cfg(debug_assertions)]
-    eprintln!("Copied {} rows to clipboard", selected.len());
 }

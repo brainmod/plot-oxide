@@ -32,12 +32,48 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         let _ = ds.get_cached_column(*col); 
     }
 
+    // Calculate outlier stats from FILTERED data (after X/Y range filters)
+    // This ensures outlier detection is relative to the visible dataset
     if app.state.filters.filter_outliers {
         app.state.outlier_stats_cache.clear();
+        let use_row_index = app.state.view.use_row_index;
+        let x_index = app.state.view.x_index;
+
         for &y_idx in &app.state.view.y_indices {
             if let Ok(y_ref) = ds.get_cached_column(y_idx) {
-                let stats = PlotOxide::calculate_statistics(&y_ref);
-                app.state.outlier_stats_cache.insert(y_idx, stats);
+                // Apply X/Y range filters to get the subset of data
+                let filtered_values: Vec<f64> = if use_row_index {
+                    let x_iter = (0..ds.height()).map(|i| i as f64);
+                    x_iter.zip(y_ref.iter())
+                        .filter_map(|(x_val, &y_val)| {
+                            if app.passes_non_outlier_filters(x_val, y_val) {
+                                Some(y_val)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    if let Ok(x_ref) = ds.get_cached_column(x_index) {
+                        x_ref.iter().zip(y_ref.iter())
+                            .filter_map(|(&x_val, &y_val)| {
+                                if app.passes_non_outlier_filters(x_val, y_val) {
+                                    Some(y_val)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    } else {
+                        y_ref.to_vec()
+                    }
+                };
+
+                // Calculate stats from filtered data
+                if !filtered_values.is_empty() {
+                    let stats = PlotOxide::calculate_statistics(&filtered_values);
+                    app.state.outlier_stats_cache.insert(y_idx, stats);
+                }
             }
         }
     }
@@ -154,10 +190,23 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
             let nanos = ((mark.value.fract() * 1_000_000_000.0) as u32).min(999_999_999);
 
             if let Some(dt) = DateTime::<Utc>::from_timestamp(secs, nanos) {
-                // Use space instead of newline to prevent layout issues
-                dt.format("%Y-%m-%d %H:%M").to_string()
+                // Use newline for better readability on x-axis
+                dt.format("%Y-%m-%d\n%H:%M:%S").to_string()
             } else {
                 format!("{:.2}", mark.value)
+            }
+        })
+        .label_formatter(|name, value| {
+            if name.is_empty() {
+                let secs = value.x.floor() as i64;
+                let nanos = ((value.x.fract() * 1_000_000_000.0) as u32).min(999_999_999);
+                if let Some(dt) = DateTime::<Utc>::from_timestamp(secs, nanos) {
+                    format!("{}\n{:.2}", dt.format("%Y-%m-%d %H:%M:%S"), value.y)
+                } else {
+                    format!("x: {:.3}\ny: {:.2}", value.x, value.y)
+                }
+            } else {
+                format!("{}\nx: {:.3}\ny: {:.2}", name, value.x, value.y)
             }
         });
     } else {
@@ -173,7 +222,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         });
     }
 
-    let plot_response = plot.show(ui, |plot_ui| {
+    let mut plot_response = plot.show(ui, |plot_ui| {
         match app.state.view.plot_mode {
             PlotMode::Scatter => {
                 // Plot each series in scatter mode
@@ -792,7 +841,7 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
                 format!("{:.2}", point[1])
             };
 
-            plot_response.response.on_hover_ui(|ui| {
+            plot_response.response = plot_response.response.on_hover_ui(|ui| {
                 ui.label(format!("Row: {}", closest_point_idx + 1));
                 ui.label(format!("{}: {}", headers[app.state.view.x_index], x_label));
                 let color = PlotOxide::get_series_color(closest_series_idx);
@@ -861,7 +910,14 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
     
     // === Edge Indicators & Minimap ===
     // Draw indicators when data extends beyond visible area
-    
+
+    // Only show edge indicators and minimap if there's actual data
+    let has_data = all_series.iter().any(|s| !s.is_empty());
+
+    if !has_data {
+        return;
+    }
+
     // Calculate actual data bounds across all series
     let (data_x_min, data_x_max, data_y_min, data_y_max) = {
         let mut x_min = f64::INFINITY;
@@ -890,13 +946,67 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
     let view_x_max = view_bounds.max()[0];
     let view_y_min = view_bounds.min()[1];
     let view_y_max = view_bounds.max()[1];
-    
-    // Check which directions have data outside view
-    let has_left = data_x_min < view_x_min;
-    let has_right = data_x_max > view_x_max;
-    let has_bottom = data_y_min < view_y_min;
-    let has_top = data_y_max > view_y_max;
-    
+
+    // Calculate zoom and pan state to determine if user has interacted with the view
+    // This prevents false positives when series are hidden via legend toggle
+    let view_x_range = view_x_max - view_x_min;
+    let view_y_range = view_y_max - view_y_min;
+    let data_x_range = data_x_max - data_x_min;
+    let data_y_range = data_y_max - data_y_min;
+
+    let x_zoom_ratio = if view_x_range > 0.0 && data_x_range > 0.0 {
+        data_x_range / view_x_range
+    } else {
+        1.0
+    };
+    let y_zoom_ratio = if view_y_range > 0.0 && data_y_range > 0.0 {
+        data_y_range / view_y_range
+    } else {
+        1.0
+    };
+
+    // Check if view is zoomed in
+    let is_zoomed = x_zoom_ratio > 1.5 || y_zoom_ratio > 1.5;
+
+    // Check if view is panned (center offset from data center by >10% of range)
+    let view_x_center = (view_x_min + view_x_max) / 2.0;
+    let view_y_center = (view_y_min + view_y_max) / 2.0;
+    let data_x_center = (data_x_min + data_x_max) / 2.0;
+    let data_y_center = (data_y_min + data_y_max) / 2.0;
+
+    let x_offset_ratio = if data_x_range > 0.0 {
+        (view_x_center - data_x_center).abs() / data_x_range
+    } else {
+        0.0
+    };
+    let y_offset_ratio = if data_y_range > 0.0 {
+        (view_y_center - data_y_center).abs() / data_y_range
+    } else {
+        0.0
+    };
+
+    let is_panned = x_offset_ratio > 0.15 || y_offset_ratio > 0.15;
+
+    // Only show edge indicators if user has zoomed or panned
+    if !is_zoomed && !is_panned {
+        return; // Auto-fit view, no indicators needed
+    }
+
+    // Check which directions have data SIGNIFICANTLY outside view (>15% of view range)
+    // This prevents showing indicators for hidden series or minor auto-fit variations
+    let x_threshold = view_x_range * 0.15;
+    let y_threshold = view_y_range * 0.15;
+
+    let has_left = data_x_min < (view_x_min - x_threshold);
+    let has_right = data_x_max > (view_x_max + x_threshold);
+    let has_bottom = data_y_min < (view_y_min - y_threshold);
+    let has_top = data_y_max > (view_y_max + y_threshold);
+
+    // If no directions have significant data outside, don't show any indicators
+    if !has_left && !has_right && !has_bottom && !has_top {
+        return;
+    }
+
     let plot_rect = plot_response.response.rect;
     let painter = ui.painter();
     
@@ -917,12 +1027,12 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         painter.text(
             arrow_center,
             eframe::egui::Align2::CENTER_CENTER,
-            "◀",
-            eframe::egui::FontId::proportional(14.0),
+            "<",
+            eframe::egui::FontId::monospace(16.0),
             arrow_color,
         );
     }
-    
+
     if has_right {
         // Right gradient
         let gradient_rect = eframe::egui::Rect::from_min_max(
@@ -935,12 +1045,12 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         painter.text(
             arrow_center,
             eframe::egui::Align2::CENTER_CENTER,
-            "▶",
-            eframe::egui::FontId::proportional(14.0),
+            ">",
+            eframe::egui::FontId::monospace(16.0),
             arrow_color,
         );
     }
-    
+
     if has_bottom {
         // Bottom gradient
         let gradient_rect = eframe::egui::Rect::from_min_max(
@@ -953,12 +1063,12 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         painter.text(
             arrow_center,
             eframe::egui::Align2::CENTER_CENTER,
-            "▼",
-            eframe::egui::FontId::proportional(14.0),
+            "v",
+            eframe::egui::FontId::monospace(16.0),
             arrow_color,
         );
     }
-    
+
     if has_top {
         // Top gradient
         let gradient_rect = eframe::egui::Rect::from_min_max(
@@ -971,24 +1081,20 @@ pub fn render_plot(app: &mut PlotOxide, ctx: &eframe::egui::Context, ui: &mut ef
         painter.text(
             arrow_center,
             eframe::egui::Align2::CENTER_CENTER,
-            "▲",
-            eframe::egui::FontId::proportional(14.0),
+            "^",
+            eframe::egui::FontId::monospace(16.0),
             arrow_color,
         );
     }
-    
-    // Draw minimap if zoomed in significantly
-    let x_zoom_ratio = (data_x_max - data_x_min) / (view_x_max - view_x_min);
-    let y_zoom_ratio = (data_y_max - data_y_min) / (view_y_max - view_y_min);
-    let is_zoomed = x_zoom_ratio > 1.5 || y_zoom_ratio > 1.5;
-    
+
+    // Draw minimap (only when zoomed in, not for panning at 1:1 scale)
     if is_zoomed && data_x_max > data_x_min && data_y_max > data_y_min {
         let minimap_size = 80.0;
         let minimap_margin = 10.0;
         let minimap_rect = eframe::egui::Rect::from_min_size(
             eframe::egui::pos2(
                 plot_rect.right() - minimap_size - minimap_margin,
-                plot_rect.top() + minimap_margin,
+                plot_rect.bottom() - minimap_size - minimap_margin, //- 35.0,  // Positioned above filename
             ),
             eframe::egui::vec2(minimap_size, minimap_size),
         );

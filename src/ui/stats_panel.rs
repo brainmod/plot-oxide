@@ -153,7 +153,7 @@ pub fn render_stats_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
             ui.horizontal(|ui| {
                 ui.colored_label(color, format!("● {}", name));
                 ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                    if ui.small_button("📋").on_hover_text("Copy stats").clicked() {
+                    if ui.small_button("Copy").on_hover_text("Copy stats to clipboard").clicked() {
                         let text = format!(
                             "{}\nCount: {}\nMin: {:.4}\nMax: {:.4}\nMean: {:.4}\nMedian: {:.4}\nStd Dev: {:.4}\nP5: {:.4}\nP25: {:.4}\nP75: {:.4}\nP95: {:.4}",
                             name, stats.count, stats.min, stats.max, stats.mean, stats.median, stats.std_dev,

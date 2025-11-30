@@ -281,36 +281,36 @@ impl App for PlotOxide {
                 });
             }
             
-            // File status overlay (Bottom Right)
-            if let Some(ref file) = self.state.current_file {
-                let text = format!("📄 {}", file.file_name().unwrap_or_default().to_string_lossy());
-                let rect = ui.max_rect();
-                // Simple positioning at bottom right with some padding
-                let pos = rect.right_bottom() - egui::vec2(10.0, 25.0);
+            // // File status overlay (Bottom Right)
+            // if let Some(ref file) = self.state.current_file {
+            //     let text = format!("📄 {}", file.file_name().unwrap_or_default().to_string_lossy());
+            //     let rect = ui.max_rect();
+            //     // Simple positioning at bottom right with some padding
+            //     let pos = rect.right_bottom() - egui::vec2(10.0, 25.0);
                 
-                // Draw a small background for legibility
-                let painter = ui.painter();
-                let galley = ui.painter().layout_no_wrap(
-                    text, 
-                    egui::FontId::proportional(12.0), 
-                    ui.visuals().text_color()
-                );
+            //     // Draw a small background for legibility
+            //     let painter = ui.painter();
+            //     let galley = ui.painter().layout_no_wrap(
+            //         text, 
+            //         egui::FontId::proportional(12.0), 
+            //         ui.visuals().text_color()
+            //     );
                 
-                let text_rect = egui::Rect::from_min_size(
-                    pos - galley.size(), 
-                    galley.size()
-                ).expand(4.0);
+            //     let text_rect = egui::Rect::from_min_size(
+            //         pos - galley.size(), 
+            //         galley.size()
+            //     ).expand(4.0);
                 
-                painter.rect(
-                    text_rect,
-                    4.0,
-                    ui.visuals().window_fill().gamma_multiply(0.8),
-                    egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-                    egui::StrokeKind::Middle,
-                );
+            //     painter.rect(
+            //         text_rect,
+            //         4.0,
+            //         ui.visuals().window_fill().gamma_multiply(0.8),
+            //         egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+            //         egui::StrokeKind::Middle,
+            //     );
                 
-                painter.galley(text_rect.min + egui::vec2(4.0, 4.0), galley, ui.visuals().text_color());
-            }
+            //     painter.galley(text_rect.min + egui::vec2(4.0, 4.0), galley, ui.visuals().text_color());
+            // }
             
             // Error Toast
             // FIX: Clone the error message to avoid holding an immutable borrow
@@ -357,6 +357,16 @@ impl App for PlotOxide {
 }
 
 fn main() {
+    // Initialize puffin profiler server when feature is enabled
+    #[cfg(feature = "profile-with-puffin")]
+    let _puffin_server = {
+        let server_addr = format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT);
+        puffin::set_scopes_on(true);
+        let server = puffin_http::Server::new(&server_addr).expect("Failed to start puffin server");
+        eprintln!("Puffin profiler server running on {}", server_addr);
+        eprintln!("Connect with: puffin_viewer {}", server_addr);
+        server
+    };
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
