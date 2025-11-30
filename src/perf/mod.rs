@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 // Re-export profiling macros for convenience
 // When no profiling feature is enabled, these become no-ops
-pub use profiling::{self, scope, function};
+pub use profiling;
 
 /// Shared immutable point data (Phase 6.1)
 pub type SharedPoints = Arc<[(f64, f64)]>;

@@ -1,6 +1,5 @@
 use crate::app::PlotOxide;
 use egui_extras::{Column, TableBuilder};
-use arboard::Clipboard;
 
 /// Recompute filtered and sorted row indices
 fn recompute_indices(

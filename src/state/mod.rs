@@ -52,6 +52,7 @@ pub struct AppState {
     /// Background worker for async operations
     pub worker: BackgroundWorker,
     /// Pre-allocated plot buffer
+    #[allow(dead_code)]
     pub plot_buffer: PlotBuffer,
     /// Loading indicator
     pub is_loading: bool,
@@ -80,6 +81,7 @@ impl Default for AppState {
     }
 }
 
+#[allow(dead_code)]
 impl AppState {
     /// Create a new application state with default values
     pub fn new() -> Self {

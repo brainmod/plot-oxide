@@ -120,7 +120,7 @@ pub fn render_stats_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
     };
     
     let headers = app.headers();
-    let data_version = app.state.ui.data_version;
+    let _data_version = app.state.ui.data_version;
     
     // Process each selected Y series
     for (series_idx, &y_idx) in app.state.view.y_indices.iter().enumerate() {
@@ -200,7 +200,7 @@ pub fn render_stats_panel(app: &mut PlotOxide, ui: &mut eframe::egui::Ui) {
             
             // Process capability if SPC enabled
             if app.state.spc.show_capability {
-                let (cp, cpk) = PlotOxide::calculate_process_capability(
+                let (_cp, _cpk) = PlotOxide::calculate_process_capability(
                     &[stats.mean], // Use cached mean
                     app.state.spc.spec_lower,
                     app.state.spc.spec_upper,

@@ -67,6 +67,7 @@ pub enum PlotError {
 }
 
 /// Result type alias for PlotOxide operations
+#[allow(dead_code)]
 pub type Result<T> = std::result::Result<T, PlotError>;
 
 /// UI-friendly error message formatting
@@ -106,6 +107,7 @@ impl PlotError {
     }
 
     /// Get a short title for the error (for toast notifications)
+    #[allow(dead_code)]
     pub fn title(&self) -> &'static str {
         match self {
             PlotError::FileIo(_) => "File Error",
