@@ -7,6 +7,7 @@ use thiserror::Error;
 
 /// Main error type for PlotOxide operations
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum PlotError {
     /// File I/O error
     #[error("Failed to access file: {0}")]

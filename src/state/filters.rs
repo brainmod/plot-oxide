@@ -1,5 +1,7 @@
 //! Data filtering configuration
 
+#![allow(dead_code)]
+
 use crate::constants::filters::*;
 
 /// Filter configuration for data selection and outlier detection

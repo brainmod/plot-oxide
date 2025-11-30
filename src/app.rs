@@ -8,6 +8,7 @@ use crate::error::PlotError;
 use crate::state::{self, WEViolation};
 
 #[derive(Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ViewConfig {
     pub show_grid: bool,
     pub show_legend: bool,
@@ -46,6 +47,7 @@ impl Default for PlotOxide {
     }
 }
 
+#[allow(dead_code)]
 impl PlotOxide {
     // Helper methods to access data through DataSource
     pub fn headers(&self) -> Vec<String> {

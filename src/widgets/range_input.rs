@@ -1,5 +1,7 @@
 //! Range input widget for min/max value filtering
 
+#![allow(dead_code)]
+
 use egui::{Response, Ui};
 
 /// A reusable widget for inputting an optional range (min/max)

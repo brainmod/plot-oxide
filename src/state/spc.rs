@@ -1,5 +1,7 @@
 //! Statistical Process Control (SPC) configuration
 
+#![allow(dead_code)]
+
 use crate::constants::spc::*;
 use serde::{Deserialize, Serialize};
 

@@ -37,6 +37,7 @@ impl Default for LineStyle {
 
 /// Layout mode for responsive design
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum LayoutMode {
     /// Compact layout for small screens (<800px) - stack panels vertically
     Compact,

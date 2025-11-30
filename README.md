@@ -109,20 +109,24 @@ src/
 
 ## Performance
 
-Validated with 100k row dataset:
-- Load: 32ms
-- Processing: 90ms
-- Stats: 2ms
-- **Total: 124ms**
+PlotOxide includes comprehensive performance optimizations:
 
-LTTB downsampling at 5000 points for smooth rendering of large datasets.
+| Operation | Metric |
+|-----------|--------|
+| 100k row load | 32ms |
+| Row-major conversion | 90ms |
+| Statistics calculation | 2ms |
+| **Total (100k rows)** | **~124ms** |
 
-## Roadmap
+### Optimization Features
+- **LTTB caching** with zoom quantization (10-50x fewer recomputes)
+- **Virtual scrolling** for data table (O(visible) instead of O(n))
+- **Adaptive downsampling** (fast nth-point during drag, LTTB when settled)
+- **Point culling** via binary search for viewport optimization
+- **Background threading** for non-blocking file loads
+- **Shared memory** using Arc for zero-copy data sharing
 
-- [ ] Timezone support for timestamp display
-- [ ] X-axis range display in stats panel
-
-See [CLAUDE.md](CLAUDE.md) for development notes.
+See [CLAUDE.md](CLAUDE.md) for full development notes and architecture details.
 
 ## License
 
