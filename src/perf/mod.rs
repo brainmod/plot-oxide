@@ -7,6 +7,8 @@
 //! - Phase 5: Background threading
 //! - Phase 6: Memory optimization (Arc-based shared data)
 
+#![allow(dead_code)]
+
 mod cache;
 mod worker;
 mod downsample;

@@ -1,5 +1,7 @@
 //! UI interaction state
 
+#![allow(dead_code)]
+
 /// Active panel in the Focus Mode layout
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePanel {

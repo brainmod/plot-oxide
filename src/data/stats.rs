@@ -1,7 +1,10 @@
+#![allow(dead_code)]
+
 use polars::prelude::*;
 
 /// Statistics results
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct Stats {
     pub mean: f64,
     pub std_dev: f64,
@@ -25,6 +28,7 @@ impl Default for Stats {
 }
 
 /// Calculate comprehensive statistics from a Series using polars
+#[allow(dead_code)]
 pub fn calculate_stats(series: &Series) -> Stats {
     let count = series.len();
 

@@ -3,6 +3,8 @@
 //! This module centralizes all magic numbers and default values used throughout
 //! the application, making them easier to maintain and configure.
 
+#![allow(dead_code)]
+
 /// Statistical Process Control (SPC) defaults
 pub mod spc {
     /// Default sigma multiplier for control limits (±3σ)

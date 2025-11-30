@@ -38,6 +38,7 @@ impl std::fmt::Display for DataError {
 impl std::error::Error for DataError {}
 
 /// DataSource wraps a Polars DataFrame with both lazy and materialized views
+#[allow(dead_code)]
 pub struct DataSource {
     /// Lazy frame for efficient filtering and transformations
     df: LazyFrame,
@@ -49,6 +50,7 @@ pub struct DataSource {
     numeric_cache: RefCell<HashMap<usize, Vec<f64>>>,
 }
 
+#[allow(dead_code)]
 impl DataSource {
     /// Load data from a file (CSV or Parquet)
     pub fn load(path: &Path) -> Result<Self, DataError> {
