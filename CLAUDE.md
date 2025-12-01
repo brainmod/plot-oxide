@@ -147,10 +147,14 @@ fn my_function() { ... }
 
 | Item | Location | Priority | Notes |
 |------|----------|----------|-------|
+| LTTB duplication | app.rs, downsample.rs, worker.rs | High | Same algorithm in 3 places - consolidate |
 | Dead code warnings | Various modules | Low | ~35 warnings for unused constants, structs, and methods |
 | Unused `show_profiler` | state/mod.rs | Low | Kept for potential future status indicator |
-| Table clipboard | data_table.rs | Medium | `copy_selected_rows` needs egui context for actual clipboard |
+| Table clipboard | data_table.rs | Medium | Uses arboard directly; could use ctx.copy_text() |
 | String column cache | source.rs | Low | Could cache `column_as_string()` like numeric columns for further speedup |
+| Magic numbers | plot.rs | Low | Minimap size, point tolerance scattered - move to constants.rs |
+
+See [CODE_REVIEW.md](CODE_REVIEW.md) for detailed analysis and [TASKS.md](TASKS.md) for prioritized work items.
 
 ### Build Status (Nov 30, 2025)
 - **Build**: ✅ Passing (0 errors, ~35 warnings)

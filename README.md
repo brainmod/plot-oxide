@@ -100,7 +100,7 @@ src/
 
 | Component | Technology |
 |-----------|------------|
-| Language | Rust 2024 |
+| Language | Rust 2021 Edition |
 | GUI | egui/eframe |
 | Plotting | egui_plot |
 | Data | Polars v0.46 |
