@@ -15,7 +15,20 @@
 
 ---
 
-## Recent Changes (Nov 29, 2025)
+## Recent Changes (Nov 30, 2025)
+
+### Critical Performance Fix
+- **Data Table Column Prefetch**: Fixed catastrophic bug where `get_string()` converted entire column for EACH cell. Pre-fetching column strings before row loop reduced render_data_table from **1500ms → 42ms** (35x improvement).
+
+### Performance Metrics (100k rows, 1 series, all overlays enabled)
+| Scope | Time | Notes |
+|-------|------|-------|
+| render_data_table | 42ms | Was 1500ms before prefetch fix |
+| render_plot | 9.8ms | During rapid panning with LTTB |
+| swap_buffers | 10ms | GPU present |
+| prefetch_column_strings | ~30ms | One-time per frame, amortized across all rows |
+
+### Nov 29, 2025 Changes
 
 ### Performance Fixes (P0)
 - **Stats Panel**: Fixed catastrophic `app.data()` call that materialized entire dataset every frame. Now uses column-major access via `get_cached_column()`.
@@ -137,11 +150,13 @@ fn my_function() { ... }
 | Dead code warnings | Various modules | Low | ~35 warnings for unused constants, structs, and methods |
 | Unused `show_profiler` | state/mod.rs | Low | Kept for potential future status indicator |
 | Table clipboard | data_table.rs | Medium | `copy_selected_rows` needs egui context for actual clipboard |
+| String column cache | source.rs | Low | Could cache `column_as_string()` like numeric columns for further speedup |
 
-### Build Status
+### Build Status (Nov 30, 2025)
 - **Build**: ✅ Passing (0 errors, ~35 warnings)
 - **Tests**: ✅ 9 passing
 - **Warnings**: Dead code only (unused public API methods and constants)
+- **Profiling**: ✅ puffin/tracy integration working
 
 ---
 
@@ -155,15 +170,21 @@ fn my_function() { ... }
 
 ## Performance
 
-### Optimizations Implemented (All 6 Phases Complete)
+### Current Benchmarks (Nov 30, 2025)
 
-Validated with 100k row dataset:
-| Operation | Time |
-|-----------|------|
-| Load CSV | 32ms |
-| Row-major conversion | 90ms |
-| Stats calculation | 2ms |
-| **Total** | **124ms** |
+Tested with 100k row CSV, 1 series selected, all filters/overlays enabled:
+| Scope | Time | Status |
+|-------|------|--------|
+| render_data_table | 42ms | ✅ Fixed (was 1500ms) |
+| render_plot | 9.8ms | ✅ Good |
+| swap_buffers | 10ms | ✅ GPU-bound |
+| prefetch_column_strings | ~30ms | ✅ Expected |
+| File load (CSV) | 32ms | ✅ Good |
+| Stats calculation | 2ms | ✅ Cached |
+
+**Total frame time during interaction: ~52ms (~19 FPS)**
+
+### Optimizations Implemented (All 6 Phases Complete)
 
 #### Phase 0: Instrumentation ✅
 - `profiling` crate integration (puffin/tracy backends)
@@ -179,7 +200,7 @@ Validated with 100k row dataset:
 
 #### Phase 3: Virtual Scrolling ✅
 - Table renders O(visible_rows) instead of O(total_rows)
-- Direct cell access via `ds.get_string(row, col)`
+- **Column string prefetch** before row loop (critical: 35x speedup)
 - Pre-computed filter/sort indices (no per-frame recomputation)
 
 #### Phase 4: Rendering Optimizations ✅
@@ -197,3 +218,16 @@ Validated with 100k row dataset:
 - Stats caching with version invalidation
 
 LTTB downsampling at 5000 points. Outlier stats cached per-column.
+
+---
+
+## Key Files Changed (Nov 30, 2025)
+
+| File | Changes |
+|------|--------|
+| `src/ui/data_table.rs` | Column string prefetch, filtering, sorting, selection |
+| `src/ui/stats_panel.rs` | CachedStats, percentiles, sparklines |
+| `src/ui/plot.rs` | Edge indicators, minimap |
+| `src/state/ui.rs` | TableState, CachedStats structs |
+| `src/main.rs` | Puffin server initialization |
+| `Cargo.toml` | profiling, puffin, puffin_http deps |

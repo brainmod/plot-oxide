@@ -111,20 +111,34 @@ src/
 
 PlotOxide includes comprehensive performance optimizations:
 
-| Operation | Metric |
-|-----------|--------|
-| 100k row load | 32ms |
-| Row-major conversion | 90ms |
-| Statistics calculation | 2ms |
-| **Total (100k rows)** | **~124ms** |
+**Benchmarks (100k rows, 1 series selected, all filters/overlays enabled):**
+| Operation | Time | Notes |
+|-----------|------|-------|
+| render_data_table | 42ms | Down from 1500ms (35x improvement) |
+| render_plot | 9.8ms | During rapid panning |
+| swap_buffers | 10ms | GPU present |
+| File load (CSV) | 32ms | Via Polars |
+| Stats calculation | 2ms | Cached after first compute |
 
 ### Optimization Features
+- **Column-string prefetch** in data table (critical fix: avoids per-cell column conversion)
 - **LTTB caching** with zoom quantization (10-50x fewer recomputes)
 - **Virtual scrolling** for data table (O(visible) instead of O(n))
 - **Adaptive downsampling** (fast nth-point during drag, LTTB when settled)
 - **Point culling** via binary search for viewport optimization
 - **Background threading** for non-blocking file loads
 - **Shared memory** using Arc for zero-copy data sharing
+- **Stats caching** with version-based invalidation
+
+### Profiling
+```bash
+# Build with profiling enabled
+cargo build --release --features profile-with-puffin
+
+# In another terminal
+cargo install puffin_viewer
+puffin_viewer
+```
 
 See [CLAUDE.md](CLAUDE.md) for full development notes and architecture details.
 
