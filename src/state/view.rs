@@ -74,12 +74,15 @@ pub struct ViewState {
     pub show_legend: bool,
 
     /// Data table panel visibility
+    #[allow(dead_code)]
     pub show_data_table: bool,
 
     /// Statistics panel visibility
+    #[allow(dead_code)]
     pub show_stats_panel: bool,
 
     /// Series panel visibility (left panel)
+    #[allow(dead_code)]
     pub show_series_panel: bool,
 
     // Plot interaction
@@ -168,6 +171,7 @@ impl Default for ViewState {
     }
 }
 
+#[allow(dead_code)]
 impl ViewState {
     /// Create a new ViewState with default values
     pub fn new() -> Self {

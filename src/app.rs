@@ -178,6 +178,43 @@ impl PlotOxide {
             .unwrap_or(false)
     }
 
+    // Check if a data point passes non-outlier filters (X/Y range, empty)
+    // Used to calculate outlier stats on filtered data
+    pub fn passes_non_outlier_filters(&self, x_val: f64, y_val: f64) -> bool {
+        // Check empty data filter
+        if self.state.filters.filter_empty {
+            if y_val.is_nan() {
+                return false;
+            }
+        }
+
+        // Check X range filter
+        if let Some(min) = self.state.filters.filter_x_min {
+            if x_val < min {
+                return false;
+            }
+        }
+        if let Some(max) = self.state.filters.filter_x_max {
+            if x_val > max {
+                return false;
+            }
+        }
+
+        // Check Y range filter
+        if let Some(min) = self.state.filters.filter_y_min {
+            if y_val < min {
+                return false;
+            }
+        }
+        if let Some(max) = self.state.filters.filter_y_max {
+            if y_val > max {
+                return false;
+            }
+        }
+
+        true
+    }
+
     // Check if a data point passes all active filters
     pub fn passes_filters(&self, _row_idx: usize, x_val: f64, y_val: f64, y_idx: usize) -> bool {
         // Check empty data filter (only for selected Y columns)
@@ -314,8 +351,9 @@ impl PlotOxide {
             self.state.ui.set_error(warning_msg);
         }
 
-        // Invalidate caches
+        // Invalidate all caches (stats, table indices, outliers)
         self.state.outlier_stats_cache.clear();
+        self.state.ui.on_data_loaded();
 
         Ok(())
     }

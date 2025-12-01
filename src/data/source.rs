@@ -145,7 +145,7 @@ impl DataSource {
     }
 
     /// Get cached numeric column, computing if necessary
-    pub fn get_cached_column(&self, col_idx: usize) -> Result<std::cell::Ref<Vec<f64>>, DataError> {
+    pub fn get_cached_column(&self, col_idx: usize) -> Result<std::cell::Ref<'_, Vec<f64>>, DataError> {
         // Check if already cached
         if !self.numeric_cache.borrow().contains_key(&col_idx) {
             // Compute
